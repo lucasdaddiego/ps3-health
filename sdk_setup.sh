@@ -54,7 +54,7 @@ print "$PS3DEV: runtime PSL1GHT 6e565a7 (2020)"
 # builds against the same sources, then its make install into portlibs/ppu (the
 # archive, the <ps3gfx/*.h> headers, OFL.txt and the COMMIT stamp that build.sh
 # checks). This script is sourced in the console loop: no $0, return not exit.
-PS3GFX_REV=385852e09f0ba71db542fdc6f3c736530634e00c   # ps3gfx main, 2026-10-10: the kit 5 to 12 times faster on the PPU (circle and glyph tables), gfx_block, frame stats, UTF-8 text
+PS3GFX_REV=677477ddf44a44c0daf5aec6707815dab99c17b6   # ps3gfx main, 2026-10-10: the kit 5 to 12 times faster on the PPU (circle and glyph tables), gfx_block, frame stats, UTF-8 text; the preview's time zone answer
 src=$PS3DEV/src/ps3gfx; rm -rf $src
 from=https://github.com/lucasdaddiego/ps3gfx; [[ -n $PS3DEV_ARCHIVE ]] && from=$PS3DEV_ARCHIVE/src/ps3gfx.bundle
 git clone -q $from $src && git -C $src checkout -q $PS3GFX_REV
