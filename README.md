@@ -79,6 +79,7 @@ drive and the result, and it goes into this table.
 
 | Model | Firmware | Drive | Version | Result | Source |
 |---|---|---|---|---|---|
+| Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.0.3 | an unattended round through webMAN's virtual pad: the drive read and a SMART read again, a short self-test to its result (about 24 s; the polls in their own thread), internet (35.5 Mbit/s; the network started behind the counter), the 2-minute load (Cell 58>60 C, RSX 55>60 C, fan 25 %), the time zone read (-180 min); the journal 21 calls ok, no freeze; the controller, the display, USB, LAN and the memory tests not run | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.0.2 | the first build on the ps3gfx library, at 1080p: the drive reads, the speed test (24/62 MB/s) and the start of the extended self-test, the temperatures and the fan duty under the 2-minute load (Cell 56>57 C, RSX 52>58 C, fan 25 %), the display and the visible area, internet (32 Mbit/s) and LAN (82 Mbit/s), the memory tests (XDR 194 MB, RSX 231 MB, no errors), Help, Quit Game; the journal and the status page followed over FTP and HTTP by ps3run for the whole run (12 min in game, no freeze); USB and the controller not run | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.0.1 | the six modules at 1080p with the app's own renderer: the drive reads, the speed test (24/61 MB/s) and a short self-test, the temperatures and the fan duty under load, the controller, the display and the visible area, internet (33 Mbit/s) and LAN (77 Mbit/s), the memory tests (XDR 194 MB, RSX 231 MB, no errors), Help with the QR code, Quit Game and a new start; USB not run (no stick) | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.0.0 | the six modules at 1080p: the drive reads and the speed test, the temperatures and the fan duty, the controller (drift 0.8 %, circle 100 %), the display and the visible area, USB (3/14 MB/s), internet (33 Mbit/s) and LAN (79 Mbit/s), the memory tests (XDR 194 MB, RSX 222 MB, no errors), Help with the QR code | author |
@@ -99,7 +100,7 @@ ends with the same text.
 
 ## Install
 
-1. Download `PS3-Health-v2.0.2.pkg` from [Releases](../../releases).
+1. Download `PS3-Health-v2.0.3.pkg` from [Releases](../../releases).
 2. Copy it to `/dev_hdd0/packages/` (FTP), or to the root of a FAT32 USB stick.
 3. With HEN on, install it: Game → Package Manager → Install Package Files (Standard
    or USB).
