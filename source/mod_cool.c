@@ -241,7 +241,7 @@ int mod_cool_open(void)
                 text_fit(x, y + 104, F_BODY, WHITE, tw, "Fan %d%% to %d%%%s", load.fan0, load.fan_end, load.fan_end > load.fan0 ? ", it responded" : "");
             else text(x, y + 104, F_BODY, GREY, "Fan not read");
             text_wrap(x, y + 146, F_BODY, verdict_dot() == DOT_OK ? GREEN : verdict_dot() == DOT_WARN ? YELLOW : RED, tw,
-                      (int)((h - 160) / 38), verdict_text());
+                      (int)((h - 155) / wrap_step(F_BODY)), verdict_text());   /* n lines end 142 + 39n under y: 13 px stay free */
             if (h >= 160) draw_graph(MG + w * 0.5f, y + 16, w * 0.5f - 16, h - 32, load.n, load.n * 2);
         } else text(x, y + 62, F_BODY, GREY, "No load test in this session.");
         footer("CROSS 2 min load  TRIANGLE 5 min load  SQUARE read again  CIRCLE home  START exit");
