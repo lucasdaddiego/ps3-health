@@ -6,6 +6,7 @@
 #include <string.h>
 #include <ppu-lv2.h>
 #include <lv2/systime.h>
+#include <sys/thread.h>
 #include <ps3gfx/ui.h>
 #include "app.h"
 #include "report.h"
@@ -433,23 +434,52 @@ static int log_before_count;
 static char st_msg[160];
 static u32 st_color = WHITE;
 
-/* Poll SMART data every 5 s; byte 363 high nibble 0xF = still running.
- * The result comes only from a new entry in the self-test log: a drive
- * that accepts the command and never runs the test shows no green pass. */
-static void selftest_poll(void)
+/* The poll's SMART reads run in a thread on a copy of D (P), so the screen
+ * and its counter keep moving while the drive is slow with the test; the copy
+ * goes back into D in the UI thread. The copy is safe because, while a test
+ * runs, the UI thread writes D only through SELECT (write_report clears
+ * dumps_dirty) and touches the journal only through SQUARE and SELECT, and
+ * both wait for the poll first (poll_settle); CROSS, R2 and the test start
+ * are blocked by running. A new write to D during a test must wait for the
+ * poll too, or the copy loses it. The thread owns the journal while it runs. */
+static drive_state P;
+static sys_ppu_thread_t poll_th;
+static volatile int poll_done;
+static int poll_busy, poll_rc;
+static u8 poll_st;                           /* byte 363 of the first read: the decision's branch, as before */
+static s64 poll_at;                          /* the poll's start: its decision uses this time, as before */
+
+static void poll_reads(void)
 {
-    if (!running || sysGetSystemTime() < next_poll) return;
-    s64 now = sysGetSystemTime();
-    next_poll = now + 5000000;
-    if (drive_read_smart(&D, 0) != 0) {
+    poll_rc = drive_read_smart(&P, 0);
+    poll_st = P.s.selftest;
+    if (poll_rc == 0 && (poll_st >> 4) != 0xF) drive_read_smart(&P, 1);   /* no longer running: the log too */
+}
+
+static void poll_thread(void *arg)
+{
+    (void)arg;
+    poll_reads();
+    __sync_synchronize();
+    poll_done = 1;
+    sysThreadExit(0);
+}
+
+/* Byte 363 high nibble 0xF = still running. The result comes only from a
+ * new entry in the self-test log: a drive that accepts the command and
+ * never runs the test shows no green pass. */
+static void poll_decide(void)
+{
+    s64 now = poll_at;
+    D = P;
+    if (poll_rc != 0) {
         running = 0;
         snprintf(st_msg, sizeof st_msg, "SMART read failed during the self-test: rc 0x%08x", (unsigned)D.smart_rc);
         st_color = RED;
-    } else if ((D.s.selftest >> 4) == 0xF) {
+    } else if ((poll_st >> 4) == 0xF) {
         seen_running = 1;
         deadline = now + 60000000;   /* the log entry may come a little after the status byte */
     } else {
-        drive_read_smart(&D, 1);
         int logged = D.have_stlog && D.log.count &&
                      (D.log.count != log_before_count || memcmp(&D.log.e[0], &log_before, sizeof log_before));
         if (logged) {
@@ -467,6 +497,41 @@ static void selftest_poll(void)
             st_color = YELLOW;
         }
     }
+}
+
+/* The thread's end: the join orders its writes to P before the copy. */
+static void poll_finish(void)
+{
+    u64 ret;
+    sysThreadJoin(poll_th, &ret);
+    poll_busy = 0;
+    poll_decide();
+}
+
+/* Waits for a running poll: before the journal is cleared or copied, and before a quit. */
+static void poll_settle(void)
+{
+    if (poll_busy) poll_finish();
+}
+
+/* Polls SMART data every 5 s while a test runs, one poll at a time. */
+static void selftest_poll(void)
+{
+    if (poll_busy) {
+        if (poll_done) poll_finish();
+        return;
+    }
+    if (!running || sysGetSystemTime() < next_poll) return;
+    poll_at = sysGetSystemTime();
+    next_poll = poll_at + 5000000;
+    P = D;
+    poll_done = 0;
+    if (sysThreadCreate(&poll_th, poll_thread, NULL, 1500, 0x20000, THREAD_JOINABLE, "poll") == 0) {
+        poll_busy = 1;
+        return;
+    }
+    poll_reads();                            /* no thread: the reads in the UI thread, as before */
+    poll_decide();
 }
 
 /* Percent done from the status byte, -1 before the first progress report. */
@@ -568,8 +633,11 @@ static int run(void)
     }
     while (1) {
         read_pad();
-        if (quit) return -1;
-        if ((pressed & BTN_START) && !running) return -1;
+        if (quit) {
+            poll_settle();
+            return -1;
+        }
+        if ((pressed & BTN_START) && !running) return -1;   /* not running: no poll runs */
         if ((pressed & BTN_CIRCLE) && !running) return 0;
         unsigned gb = BTN_SQUARE;              /* only gestures that can fire now arm */
         if (!running && !D.demo) gb |= BTN_R2;
@@ -581,6 +649,7 @@ static int run(void)
         }
         if (running && (pressed & BTN_TRIANGLE)) selftest_screen();   /* back to the running test */
         if (fired == BTN_SQUARE) {
+            poll_settle();
             int rc = journal_clear();
             if (rc == 0) snprintf(st_msg, sizeof st_msg, "Freeze journal cleared. Start the app again to run the skipped steps.");
             else snprintf(st_msg, sizeof st_msg, "Could not clear the freeze journal: rc 0x%08x", (unsigned)rc);
@@ -601,7 +670,10 @@ static int run(void)
         if ((pressed & BTN_CROSS) && !running && D.ata_ok && !D.demo) {
             run_job_report("Reading SMART data", job_smart);
         }
-        if (pressed & BTN_SELECT) st_color = report_to_usb(st_msg, sizeof st_msg);
+        if (pressed & BTN_SELECT) {
+            poll_settle();                   /* the copy reads the journal */
+            st_color = report_to_usb(st_msg, sizeof st_msg);
+        }
         if (fired == BTN_R2 && !running && !D.demo) {
             run_job_report("Speed test: writing and reading a 64 MB file", job_speed);
             speed_screen();             /* the result; the summary page keeps its own line */
