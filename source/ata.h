@@ -54,6 +54,9 @@ void drive_load_prev(drive_state *d);
 void console_info(drive_state *d);
 extern char console_fw[16];                                 /* "4.93" from version.txt, "" when unknown */
 void console_firmware(void);                                /* fills console_fw, once at start */
+extern int console_tz, console_summer, console_tz_rc;       /* the time zone setting: TIMEZONE (minutes), SUMMERTIME, the TIMEZONE read's rc */
+void console_timezone(void);                                /* fills them, once at start, in the UI thread */
+int console_utc_offset(void);                               /* seconds to add to UTC for a local date: 0 when not read or out of range */
 int console_temps(int *cpu, int *rsx);                        /* syscall 383, journal "temps"; the rc */
 int fan_policy_read(int *percent, int *mode);                 /* syscall 409, read-only; journal "fan_policy"; the rc */
 /* A file of 64 x 1 MB written and read back in dir, then deleted; the journal name is jname. */

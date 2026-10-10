@@ -25,6 +25,7 @@ int main(void)
     if (!safe_load() && fs_ok) safe_calibrate(1);   /* the first start: the visible area of this TV */
     state_load();
     console_firmware();
+    console_timezone();
     atexit(leave);
     int sel = 0;
     while (!quit) {

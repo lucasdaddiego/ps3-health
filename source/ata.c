@@ -17,6 +17,7 @@
 #include <ppu-lv2.h>
 #include <sys/file.h>
 #include <sys/systime.h>
+#include <sysutil/sysutil.h>
 #include "ata.h"
 #include <ps3gfx/fs.h>
 #include <ps3gfx/journal.h>
@@ -255,6 +256,26 @@ void console_firmware(void)
     unsigned major = 0;
     char minor[8] = "";
     if (r && sscanf(r + 8, "%u.%4[0-9]", &major, minor) == 2) snprintf(console_fw, sizeof console_fw, "%u.%.2s", major, minor);
+}
+
+/* The console's time zone setting, read once at start in the UI thread: the
+ * report is also written from job threads. TIMEZONE is taken as minutes east
+ * of UTC (RPCS3 answers 180, which fits minutes). The report's console line
+ * shows the raw values, so a round on the console checks the unit. */
+int console_tz, console_summer, console_tz_rc = -1;
+
+void console_timezone(void)
+{
+    s32 v = 0;
+    console_tz_rc = sysUtilGetSystemParamInt(SYSUTIL_SYSTEMPARAM_ID_TIMEZONE, &v);
+    if (console_tz_rc == 0) console_tz = v;
+    if (sysUtilGetSystemParamInt(SYSUTIL_SYSTEMPARAM_ID_SUMMERTIME, &v) == 0) console_summer = v;
+}
+
+int console_utc_offset(void)
+{
+    if (console_tz_rc || console_tz < -720 || console_tz > 840) return 0;
+    return (console_tz + (console_summer ? 60 : 0)) * 60;
 }
 
 /* The Cell and RSX temperatures for the drive pages (syscall 383, journaled like the drive commands). */

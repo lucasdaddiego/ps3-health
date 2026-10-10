@@ -90,7 +90,7 @@ void state_set(const char *key, int dot, const char *l1, const char *l2)
     if (k < 0) return;
     u64 sec = 0, nsec = 0;
     sysGetCurrentTime(&sec, &nsec);
-    time_t tt = (time_t)sec;
+    time_t tt = (time_t)sec + console_utc_offset();   /* the local date: the console's time zone, UTC when not read */
     struct tm tm;
     gmtime_r(&tt, &tm);
     tiles[k].dot = dot;

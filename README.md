@@ -114,13 +114,14 @@ default, 93 % of the screen. The Display module can change it later.
 
 The home screen: six tiles, each with what the module checks, a dot (green ok,
 yellow check, red problem, hollow when the module never ran), two lines from
-the last result and its date, and a verdict line under them. D-pad chooses,
-CROSS opens a module, CIRCLE in a module goes back home, START exits. TRIANGLE
-opens Help: the QR code of the compatibility report (it opens a prefilled
-GitHub issue on a phone; nothing is sent until you submit it) and a short
-guide. SELECT copies the report and `journal.txt` to the first USB stick found,
-into `ps3_health/`. SQUARE twice clears the freeze journal (see Safety). The
-button line at the bottom of each screen shows the controller's own symbols.
+the last result and its date (in the console's time zone), and a verdict line
+under them. D-pad chooses, CROSS opens a module, CIRCLE in a module goes back
+home, START exits. TRIANGLE opens Help: the QR code of the compatibility
+report (it opens a prefilled GitHub issue on a phone; nothing is sent until
+you submit it) and a short guide. SELECT copies the report and `journal.txt`
+to the first USB stick found, into `ps3_health/`. SQUARE twice clears the
+freeze journal (see Safety). The button line at the bottom of each screen
+shows the controller's own symbols.
 
 ### Drive
 
@@ -214,8 +215,10 @@ back). Both write only to memory the app allocated. CIRCLE stops a test.
 
 In `/dev_hdd0/tmp/ps3_health/`:
 - `report-YYYYMMDD-HHMMSS.txt` — one report per write (UTC time): the console
-  line, then a section per module with a result. The drive serial number is
-  masked (`AB******78`). The drive section ends with the compatibility text.
+  line (the firmware, the temperatures, the time zone setting: TIMEZONE in
+  minutes and SUMMERTIME), then a section per module with a result. The drive
+  serial number is masked (`AB******78`). The drive section ends with the
+  compatibility text.
 - `state.txt` — the last result of each module, for the home screen.
 - `compat.txt` — the compatibility text of the last Drive result. Help shows
   it until the Drive module runs in the session.

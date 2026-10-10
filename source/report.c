@@ -62,6 +62,8 @@ void write_report(void)
     int body = rlen;
     rep_out("console: firmware %s", console_fw[0] ? console_fw : "unknown");
     if (D.cpu_temp >= 0) rep_out(", Cell %d C, RSX %d C", D.cpu_temp, D.rsx_temp);
+    if (!console_tz_rc) rep_out(", time zone %d min, summer time %d", console_tz, console_summer);
+    else rep_out(", time zone not read (rc 0x%08x)", (unsigned)console_tz_rc);
     rep_out("\n\n");
     for (int k = 0; k < MODULE_COUNT; k++) {
         int before = rlen;
