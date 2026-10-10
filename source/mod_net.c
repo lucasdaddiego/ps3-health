@@ -298,7 +298,8 @@ static void detail(float x, float y, float w, int k, const char *fmt, ...)
 
 int mod_net_open(void)
 {
-    net_init();
+    if (!net_up) run_job("Starting the network", net_init);   /* the modules load: the counter shows the console works */
+    else net_init();
     pick_url();
     while (1) {
         read_pad();
