@@ -27,6 +27,22 @@ static void job_selftest(void) { job_rc = drive_start_selftest(&D, st_type); }
 static void job_errlog(void) { drive_read_error_log(&D); }
 static void job_gpl(void) { drive_read_gpl(&D); }
 
+/* A job, then the report and the drive's dump files in the same thread (up to
+ * 10 files after a full read), so the counter runs during the writes. The UI
+ * thread only draws the job screen meanwhile. */
+static void (*report_after)(void);
+static void job_and_report(void)
+{
+    report_after();
+    progress("Writing the report");
+    write_report();
+}
+static void run_job_report(const char *msg, void (*fn)(void))
+{
+    report_after = fn;
+    run_job(msg, job_and_report);
+}
+
 typedef struct {
     const char *name;       /* the first journal entry the job writes: its state decides the prompt */
     const char *title, *l1, *l2, *l3, *progress;
@@ -583,13 +599,11 @@ static int run(void)
         }
 
         if ((pressed & BTN_CROSS) && !running && D.ata_ok && !D.demo) {
-            run_job("Reading SMART data", job_smart);
-            write_report();
+            run_job_report("Reading SMART data", job_smart);
         }
         if (pressed & BTN_SELECT) st_color = report_to_usb(st_msg, sizeof st_msg);
         if (fired == BTN_R2 && !running && !D.demo) {
-            run_job("Speed test: writing and reading a 64 MB file", job_speed);
-            write_report();
+            run_job_report("Speed test: writing and reading a 64 MB file", job_speed);
             speed_screen();             /* the result; the summary page keeps its own line */
             page = 1;
         }
@@ -666,8 +680,7 @@ int mod_drive_open(void)
             D.probed = 1;
             if (optional_steps() < 0) return -1;
         }
-        run_job("Reading the console temperatures", job_console);
-        write_report();
+        run_job_report("Reading the console temperatures", job_console);
     }
     int back = run();
     drive_tile();
