@@ -51,6 +51,18 @@ jobs:
           assert v['TITLE'] == 'PS3 Health' and v['TITLE_ID'] == 'HDSH00001', v
           PY
 
+      - name: sfo.xml APP_VER and VERSION match source/version.h (2.1.0 is 02.10)
+        shell: sh
+        run: |
+          v=$(sed -n 's/^#define APP_VERSION "\([0-9][0-9]*\.[0-9]\.[0-9]\)"$/\1/p' source/version.h)
+          [ -n "$v" ] || { echo "source/version.h: no APP_VERSION \"X.Y.Z\" with a one-digit Y and Z"; exit 1; }
+          want=$(printf '%02d.%d%d' $(echo "$v" | tr . ' '))
+          for k in APP_VER VERSION; do
+            got=$(sed -n "/<value name=\"$k\"/{n;s/[[:space:]]//g;p;}" sfo.xml)
+            [ "$got" = "$want" ] || { echo "sfo.xml $k is '$got', source/version.h $v needs $want"; exit 1; }
+          done
+          echo "sfo.xml APP_VER and VERSION $want, source/version.h $v"
+
   pkg:
     name: PS3 pkg (Linux ps3dev bundle)
     runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to 26.04 from 2026-10-19; the bundle and libelf1t64 are checked on 24.04

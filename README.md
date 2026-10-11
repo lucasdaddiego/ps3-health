@@ -41,7 +41,7 @@ Until 1.3.0 the app was "HDD/SSD Health", the Drive module alone.
 
 The screens are rendered on a Mac from the app's own code at 1920 x 1080. The
 drive data comes from the author's SSD with the serial number masked. The
-temperatures, the sticks and the memory size are simulated.
+temperatures, the SPU rates, the sticks and the memory size are simulated.
 
 <table>
 <tr>
@@ -538,11 +538,13 @@ Toolchain findings that cost the most time:
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push: the host test of
 the decoder, a compile and `--help` smoke of the Python scripts with the
-`syscalls.py` self-test, and a pkg build on Linux with the same `sdk_setup.sh`
-(the pkg is a workflow artifact) followed by the syscall audit of its ELF. The
-signed EBOOT is verified in CI only when the repository secret `PS3DEV_KEYS_TOML`
-holds the key file. A `v*` tag (`.github/workflows/release.yml`) builds the pkg
-and attaches `PS3-Health-<tag>.pkg` and `SHA256SUMS` to a draft release.
+`syscalls.py` self-test, a check that `APP_VER` and `VERSION` in `sfo.xml` match
+`source/version.h` (2.1.0 is 02.10), and a pkg build on Linux with the same
+`sdk_setup.sh` (the pkg is a workflow artifact) followed by the syscall audit of
+its ELF. The signed EBOOT is verified in CI only when the repository secret
+`PS3DEV_KEYS_TOML` holds the key file. A `v*` tag
+(`.github/workflows/release.yml`) builds the pkg and attaches
+`PS3-Health-<tag>.pkg` and `SHA256SUMS` to a draft release.
 
 ## Credits
 

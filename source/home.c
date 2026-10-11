@@ -20,7 +20,7 @@ const module modules[MODULE_COUNT] = {
      mod_display_report},
     {"Transfer", "transfer", "The speed of a USB stick, the internet and the LAN.", mod_net_open,
      mod_net_report},
-    {"Memory", "memory", "Pattern tests on the XDR and the RSX memory.", mod_mem_open,
+    {"Memory", "memory", "Pattern tests on the XDR, the RSX memory and the SPUs.", mod_mem_open,
      mod_mem_report},
 };
 

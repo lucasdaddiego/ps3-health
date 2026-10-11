@@ -157,8 +157,8 @@ int help_screen(void)
 
         card(MG, cy, SW - 2 * MG, card_h);
         cy = heading(cx, cy + 22, "GOOD TO KNOW");
-        cy = note(cx, cy, cw, "Report", "Every module writes it in " APP_DIR ". SELECT copies it and the freeze journal to "
-                                        "a USB stick, into ps3_health/.");
+        cy = note(cx, cy, cw, "Report", "Every module writes it in " APP_DIR ". SELECT copies it, the freeze journal and "
+                                        "trend.txt to a USB stick, into ps3_health/.");
         cy = note(cx, cy, cw, "Freeze journal", "Each risky call is written down before it runs. If one freezes the console, "
                                                 "hold the power button: the next start skips it. SQUARE twice on the home "
                                                 "screen clears the journal.");
