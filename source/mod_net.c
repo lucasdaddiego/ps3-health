@@ -28,20 +28,39 @@ enum { USB_NO_STICK = 1, USB_FROZEN, USB_NO_JOURNAL };
 static struct { int done, rc; double mb, wsec, rsec; char dir[32]; } usb;
 static struct { int done, rc, http, port; double bytes, sec; char host[96], path[160], note[96]; } dl;
 static struct { int done, rc; double bytes, sec; char note[96]; } lan;
-static int net_up;
+static int net_up, net_frozen;               /* net_frozen: the network start froze this console before */
 static char my_ip[32];
 static char lan_msg[160];
 
+/* The console's address, read again on every open: DHCP may have answered since. */
+static void net_addr(void)
+{
+    union net_ctl_info info;
+    if (netCtlGetInfo(NET_CTL_INFO_IP_ADDRESS, &info) == 0) snprintf(my_ip, sizeof my_ip, "%s", info.ip_address);
+    else snprintf(my_ip, sizeof my_ip, "no address");
+}
+
+/* Every caller comes here. The first start (netInitialize, the netctl module,
+ * netCtlInit, the first address read) is one journaled call, so a start that
+ * froze the console never runs again. Then no network call runs at all:
+ * libnetctl needs the module that the start loads. The first read is inside
+ * the entry because the first open runs all of it behind the job screen,
+ * which promises that skip. The flag follows the journal on each call, so
+ * SQUARE twice brings the start back in the same session. */
 static void net_init(void)
 {
     if (!net_up) {
-        if (netInitialize() == 0) net_up = 1;
+        net_frozen = !journal_start("net_start");   /* 0 for a frozen or skipped entry */
+        if (net_frozen) { snprintf(my_ip, sizeof my_ip, "not started"); return; }
+        s32 rc = netInitialize();
+        if (rc == 0) net_up = 1;
         sysModuleLoad(SYSMODULE_NETCTL);     /* libnetctl does not load its module itself */
         netCtlInit();
+        net_addr();
+        journal_done("net_start", rc, rc == 0);
+        return;
     }
-    union net_ctl_info info;                 /* read again on every open: DHCP may have answered since */
-    if (netCtlGetInfo(NET_CTL_INFO_IP_ADDRESS, &info) == 0) snprintf(my_ip, sizeof my_ip, "%s", info.ip_address);
-    else snprintf(my_ip, sizeof my_ip, "no address");
+    net_addr();                              /* a later read: no screen promises a skip for it */
 }
 
 /* ---- USB ------------------------------------------------------------------ */
@@ -113,6 +132,9 @@ static int tcp_connect(in_addr_t ip, int port)
 
 static char netbuf[65536] __attribute__((aligned(128)));
 
+/* The note of a test that found no network: short enough for a card at the narrowest visible area */
+static const char *net_down(void) { return net_frozen ? "the network start froze before" : "network not initialised"; }
+
 static void job_download(void)
 {
     in_addr_t ip;
@@ -122,7 +144,7 @@ static void job_download(void)
     dl.note[0] = 0;
     pick_url();
     net_init();
-    if (!net_up) { dl.rc = -1; snprintf(dl.note, sizeof dl.note, "network not initialised"); dl.done = 1; return; }
+    if (!net_up) { dl.rc = -1; snprintf(dl.note, sizeof dl.note, "%s", net_down()); dl.done = 1; return; }
     progress("Resolving the host name");
     if (resolve(dl.host, &ip)) { dl.rc = -2; snprintf(dl.note, sizeof dl.note, "DNS failed for %.60s", dl.host); dl.done = 1; return; }
     progress("Connecting");
@@ -193,7 +215,7 @@ static void job_lan(void)
     lan.bytes = 0;
     lan.note[0] = 0;
     net_init();
-    if (!net_up) { lan.rc = -1; snprintf(lan.note, sizeof lan.note, "network not initialised"); lan.done = 1; return; }
+    if (!net_up) { lan.rc = -1; snprintf(lan.note, sizeof lan.note, "%s", net_down()); lan.done = 1; return; }
     int ls = netSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (ls < 0) { lan.rc = -2; snprintf(lan.note, sizeof lan.note, "socket failed"); lan.done = 1; return; }
     int one = 1;
@@ -298,7 +320,12 @@ static void detail(float x, float y, float w, int k, const char *fmt, ...)
 
 int mod_net_open(void)
 {
-    if (!net_up) run_job("Starting the network", net_init);   /* the modules load: the counter shows the console works */
+    /* The modules load behind the counter, which shows the console works, and
+     * the journal backs the job screen's skip promise. A start that froze
+     * before shows no job screen. Without a journal the start still runs, but
+     * with no job screen: no screen promises a skip that cannot happen. */
+    int js = journal_state("net_start");
+    if (!net_up && fs_ok && js != J_FROZEN && js != J_SKIPPED) run_job("Starting the network", net_init);
     else net_init();
     pick_url();
     while (1) {
@@ -310,7 +337,8 @@ int mod_net_open(void)
         if (pressed & BTN_SQUARE) { run_job_cancelable("LAN test", job_lan); write_report(); }
         begin_frame();
         title();
-        title_right("Console address: %s", my_ip);
+        if (net_frozen) title_right("Network not started: it froze this console before");
+        else title_right("Console address: %s", my_ip);
         float w = (SW - 2 * MG - 64) / 3, h = BOTTOM - TOP - 56 > 500 ? 500 : BOTTOM - TOP - 56, y = TOP;
         float x = MG;
         test_card(x, y, w, h, BTN_CROSS, "USB stick", "Writes a 64 MB file on the first USB stick, reads it back and deletes it.");

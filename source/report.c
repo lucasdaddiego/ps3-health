@@ -80,26 +80,34 @@ void write_report(void)
 }
 
 /* Copies the last report and the freeze journal to the first USB stick, into
- * ps3_health/: 0, USB_NONE when no stick, else the write rc (-1: short write). */
+ * ps3_health/: 0, USB_NONE when no stick, USB_FROZEN when the copy froze this
+ * console before, else the write rc (-1: short write). The copy is one
+ * journaled call. The journal is read before its start line, so the copy on
+ * the stick holds no open start of its own. */
 #define USB_NONE 1
+#define USB_FROZEN 2
 static int report_copy_usb(char *dst, int n)
 {
     char dir[48];
     const char *base = strrchr(report_path, '/');
     base = base ? base + 1 : report_path;
     dst[0] = 0;
-    if (usb_find(dir, sizeof dir)) return USB_NONE;
-    strcat(dir, "/ps3_health");
-    sysLv2FsMkdir(dir, 0777);
-    snprintf(dst, n, "%s/%s", dir, base);
-    int rc = fs_write_file(dst, rep, rlen, 0);
     static char jtext[32768];                /* the freeze journal too: it tells at which step a console froze */
     int jlen = fs_read_file(APP_DIR "/journal.txt", jtext, sizeof jtext);
+    if (!journal_start("usb_copy")) return USB_FROZEN;   /* 0 for a frozen or skipped entry */
+    int rc = usb_find(dir, sizeof dir) ? USB_NONE : 0;
+    if (rc == 0) {
+        strcat(dir, "/ps3_health");
+        sysLv2FsMkdir(dir, 0777);
+        snprintf(dst, n, "%s/%s", dir, base);
+        rc = fs_write_file(dst, rep, rlen, 0);
+    }
     if (rc == 0 && jlen > 0) {
         char jdst[64];
         snprintf(jdst, sizeof jdst, "%s/journal.txt", dir);
         fs_write_file(jdst, jtext, (u64)jlen, 0);
     }
+    journal_done("usb_copy", rc, rc == 0);
     return rc;
 }
 
@@ -107,13 +115,21 @@ static char usb_dst[128];
 static int usb_rc;
 static void job_copy(void) { usb_rc = report_copy_usb(usb_dst, sizeof usb_dst); }
 
-/* The copy runs as a job: a slow stick shows the counter, not a still picture. */
+/* The copy runs as a job: a slow stick shows the counter, not a still picture,
+ * and the journal backs the job screen's skip promise. A copy that froze
+ * before shows no job screen: it does not run. Without a journal the copy
+ * runs in this thread: no screen promises a skip that cannot happen. */
 u32 report_to_usb(char *msg, int n)
 {
     write_report();                          /* the results of this moment, every module */
-    run_job("Copying the report to the USB stick", job_copy);
+    int js = journal_state("usb_copy");
+    if (fs_ok && js != J_FROZEN && js != J_SKIPPED) run_job("Copying the report to the USB stick", job_copy);
+    else job_copy();
     if (usb_rc == 0) snprintf(msg, n, "Report copied to %s", usb_dst);
     else if (usb_rc == USB_NONE) snprintf(msg, n, "No USB stick found (/dev_usb000 to 007).");
+    else if (usb_rc == USB_FROZEN)           /* the home screen takes SQUARE twice only with a writable folder */
+        snprintf(msg, n, "The USB copy froze this console before: not run.%s",
+                 fs_ok ? " SQUARE twice on the home screen clears the journal." : "");
     else snprintf(msg, n, "Could not write %s (rc 0x%08x)", usb_dst, (unsigned)usb_rc);
     return usb_rc == 0 ? GREEN : YELLOW;
 }

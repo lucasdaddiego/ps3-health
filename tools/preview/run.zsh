@@ -68,7 +68,7 @@ demohome|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= DEMO=1 scn demohome "4:CROSS 12:TRIANGLE 80:CIRCLE 90:CROSS 98:TRIANGLE 160:CIRCLE 170:SNAP=home_after_demo 171:EXIT"
     ls $P/build/sbx/demohome/dev_hdd0/tmp/ps3_health | grep report ;|
 nofs|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= NOFS=1 scn nofs "3:SNAP=nofs_home 4:SQUARE 6:SQUARE 8:SNAP=nofs_square 10:SELECT 14:SNAP=nofs_usb 16:DOWN 17:RIGHT 19:CROSS 27:CROSS 60:SNAP=nofs_net 61:EXIT" ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL= NOFS=1 scn nofs "3:SNAP=nofs_home 4:SQUARE 6:SQUARE 8:SNAP=nofs_square 10:SELECT 10:SNAP=nofs_select 14:SNAP=nofs_usb 16:DOWN 17:RIGHT 19:CROSS 19:SNAP=nofs_open 27:CROSS 60:SNAP=nofs_net 61:EXIT" ;|
 cool383|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn cool383 "4:RIGHT 6:CROSS 16:CROSS 60:SNAP=cool_383 62:CIRCLE 70:EXIT" PV_383_RC=80010003
     grep -nE "cooling|383" $P/build/sbx/cool383/dev_hdd0/tmp/ps3_health/report-*.txt ;|
@@ -88,6 +88,17 @@ help|all)
 helpkept|all)
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn helpkept "4:CROSS 12:CROSS 120:CIRCLE 130:EXIT"
     again helpkept "3:TRIANGLE 14:SNAP=help_kept 15:EXIT" ;|
+net_frozen|all)
+    SAFE=$DEF_SAFE STATE= JOURNAL=$'start net_start\n' scn net_frozen "4:DOWN 5:RIGHT 7:CROSS 7:SNAP=net_frozen 9:TRIANGLE 40:SQUARE 80:SNAP=net_frozen_tests 81:EXIT"
+    grep -h "froze" $P/build/sbx/net_frozen/dev_hdd0/tmp/ps3_health/report-*.txt
+    cat $P/build/sbx/net_frozen/dev_hdd0/tmp/ps3_health/journal.txt ;|
+copy_frozen|all)
+    SAFE=$DEF_SAFE STATE= JOURNAL=$'start usb_copy\n' scn copy_frozen "3:SELECT 3:SNAP=copy_frozen_select 20:SNAP=copy_frozen 22:SQUARE 24:SQUARE 26:DOWN 27:RIGHT 29:CROSS 60:CIRCLE 70:SELECT 100:SNAP=copy_cleared 101:EXIT"
+    cat $P/build/sbx/copy_frozen/dev_hdd0/tmp/ps3_health/journal.txt
+    ls $P/build/sbx/copy_frozen/dev_usb000/ps3_health
+    cat $P/build/sbx/copy_frozen/dev_usb000/ps3_health/journal.txt
+    SAFE=$DEF_SAFE STATE= JOURNAL=$'start usb_copy\n' NOFS=1 scn copy_frozen_nofs "3:SELECT 10:SNAP=copy_frozen_nofs 11:EXIT"
+    cat $P/build/sbx/copy_frozen_nofs/dev_hdd0/tmp/ps3_health/journal.txt ;|
 esac
 ${PYTHON:-python3} -I - "$OUT" <<'PY'
 import glob, os, sys

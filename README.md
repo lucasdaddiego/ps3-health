@@ -120,9 +120,10 @@ under them. D-pad chooses, CROSS opens a module, CIRCLE in a module goes back
 home, START exits. TRIANGLE opens Help: the QR code of the compatibility
 report (it opens a prefilled GitHub issue on a phone; nothing is sent until
 you submit it) and a short guide. SELECT copies the report and `journal.txt`
-to the first USB stick found, into `ps3_health/`. SQUARE twice clears the
-freeze journal (see Safety). The button line at the bottom of each screen
-shows the controller's own symbols.
+to the first USB stick found, into `ps3_health/`. The copy is journaled: after
+a freeze inside it, SELECT copies nothing until the journal is cleared. SQUARE
+twice clears the freeze journal (see Safety). The button line at the bottom of
+each screen shows the controller's own symbols.
 
 ### Drive
 
@@ -202,6 +203,12 @@ the PC (`nc <address> 5201 < /dev/zero`); it receives for 10 s and shows the
 rate. A download counts only when the whole file arrived. The wired port is
 1 Gbit/s on every PS3, Wi-Fi is 802.11g.
 
+The first open starts the network behind the counter, as one journaled call.
+Without a writable app folder there is no journal, so no skip can follow a
+freeze, and the start runs with no counter. If the start froze the console,
+the app never runs it again: the title line says so, and the internet and LAN
+tests fail with that reason.
+
 ### Memory
 
 CROSS takes all the user memory (XDR) the app can get in 1 MB blocks, about
@@ -269,11 +276,13 @@ The other system calls, all read-only and journaled like the drive calls:
 383 `sys_game_get_temperature` (Cell and RSX) and, behind a first-run prompt,
 409 `sys_sm_get_fan_policy` (the fan duty). The speed and USB tests use the
 normal file calls, the Transfer module the normal socket calls, the Memory
-module its own allocations, the Display module the video state read. (Raw
-sector reads, syscall 602, and the console id, syscall 870, are refused on
-HEN: ENXIO and EPERM on the test console. The app does not call them.) The
-build checks this: `tools/syscalls.py` scans the ELF for every syscall number
-and fails on 602, 604 or 870, or on a number outside `tools/syscalls.allow`.
+module its own allocations, the Display module the video state read. The
+network start (the first open of Transfer) and the copy to a USB stick
+(SELECT) are journaled too. (Raw sector reads, syscall 602, and the console
+id, syscall 870, are refused on HEN: ENXIO and EPERM on the test console. The
+app does not call them.) The build checks this: `tools/syscalls.py` scans the
+ELF for every syscall number and fails on 602, 604 or 870, or on a number
+outside `tools/syscalls.allow`.
 
 Sending ATA commands to the internal drive from a PS3 app was new ground. While
 we tested, one other method (syscall 604 with LV1 command 0x22) **froze the
