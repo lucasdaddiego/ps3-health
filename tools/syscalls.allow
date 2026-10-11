@@ -1,18 +1,31 @@
 # LV2 syscalls the ELF makes, one number per line (tools/syscalls.py checks the
 # ELF against this file; --write rewrites it from a known-good ELF and drops
 # these notes). Written on 2026-10-09 from the 2.0.1 tree: 45 numbers, 95 call
-# sites, cross-checked against ppu-objdump (every sc resolved).
+# sites, cross-checked against ppu-objdump (every sc resolved). The SPU calls
+# joined on 2026-10-11: 53 numbers.
 # The app's own calls are named in README.md (Safety, How it reaches the
-# drive): 383 temperatures, 409 fan duty, 600/601/609/616 the drive. The rest
-# is PSL1GHT's runtime: threads and time (44, 141, 142, 145, 146), memory
-# (330, 331, 337), the tty (402, 403), the network (700 to 714) and the file
-# system (801 to 834). Never 602, 604 or 870: the script refuses them whatever
-# this file says.
+# drive): 383 temperatures, 409 fan duty, 600/601/609/616 the drive, and the
+# SPU thread group of the Memory module's local-store test: 169 (initialize),
+# 170, 171, 173, 177, 178 (the group: create, destroy, start, terminate,
+# join), 172 (a thread in the group), 165 (its exit status). The SPU image
+# import and close are SPRX calls into the firmware's liblv2, not syscalls.
+# The rest is PSL1GHT's runtime: threads and time (44, 141, 142, 145, 146),
+# memory (330, 331, 337), the tty (402, 403), the network (700 to 714) and the
+# file system (801 to 834). Never 602, 604 or 870: the script refuses them
+# whatever this file says.
 44
 141
 142
 145
 146
+165
+169
+170
+171
+172
+173
+177
+178
 330
 331
 337

@@ -13,6 +13,7 @@ int fs_ok, fs_mk, fs_op, fs_wr;
 /* Every exit path: START, Quit Game from the PS button menu, and exit(). */
 static void leave(void)
 {
+    spu_last_resort();                       /* a group of SPU threads still up: one more terminate */
     drive_close(&D);
     ui_end();
 }

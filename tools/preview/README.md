@@ -33,7 +33,15 @@ repeat.
 The library's world refuses every LV2 syscall and answers the network
 offline. `pv_app.c` defines the strong `pv_syscall`: the drive (syscalls 600,
 601, 609 and 616, answered from a console's sector dumps), the temperatures
-(383) and the fan duty (409).
+(383), the fan duty (409) and the six SPUs of the SPU kit (165, 169 to 173,
+177, 178, and the image import and close). `stub/sys/spu.h` and
+`stub/lv2/spu.h` stand in for PSL1GHT's headers (`build.zsh` adds `stub/` to
+the include path), so the driver's calls reach `pv_syscall`. One emulated
+group: the start runs each thread at once, in the caller's thread, with the
+kit's local-store kernel over a host buffer of the area's size, and fills the
+reports as the SPU program does (lo 0x1980, the kit's at the pinned commit;
+the ticks a model of 0.1 s). The join gives cause 2, or cause 4 and the value
+after a terminate.
 
 ## Drive dumps
 
@@ -61,3 +69,7 @@ adds:
 | `PV_RISE=1` | temperatures that rise under load |
 | `PV_TEMP_OFF=n` | add n degrees to every reading |
 | `PV_383_RC=80010003` | syscall 383 refused with this rc |
+| `PV_SPU_FAIL=n` | SPU syscall n (165 to 178) fails with 0x80010002 |
+| `PV_SPU_LATE=i` | SPU i never reports: the driver's late path (the terminate, the join) |
+| `PV_SPU_STALL=i,n` | SPU i stops after pass n, without its last report: the driver's stop at 5 s |
+| `PV_LS_FAULT=i` | one bit stuck at 1 in one word of SPU i's local store |

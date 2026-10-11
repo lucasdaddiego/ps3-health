@@ -10,7 +10,9 @@ DRIVE=${PV_DRIVE:-$HOME/.local/share/ps3-health/drive}
 [[ -x $P/build/pv ]] || { print -u2 "run build.zsh first"; exit 1 }
 [[ -f $DRIVE/identify.bin ]] || print -u2 "no dumps in $DRIVE: the Drive scenarios show the probe screen"
 mkdir -p $OUT
-J_DONE=$'done error_log rc=0x00000000 ok=1\ndone gpl_devstat rc=0x00000000 ok=1\ndone gpl_phy rc=0x00000000 ok=1\ndone fan_policy rc=0x00000000 ok=1\n'
+J_DONE=$'done error_log rc=0x00000000 ok=1\ndone gpl_devstat rc=0x00000000 ok=1\ndone gpl_phy rc=0x00000000 ok=1\ndone fan_policy rc=0x00000000 ok=1\ndone spu_import rc=0x00000000 ok=1\n'
+MEM='4:DOWN 6:RIGHT 8:RIGHT 10:CROSS'   # home to the Memory module
+SBX=$P/build/sbx
 DEF_SAFE='67 38 1853 1042'
 # trend.txt of the test SSD: readings kept by hand, in local time (the preview's clock adds 2026-10-08 09:00)
 TREND_SEED=$'drive Dahua V800 2.5 inch SATA 1TB SSD\n2026-10-06 16:52 918 38 72018 100 0\n2026-10-06 19:45 921 36 72132 100 0\n2026-10-07 19:52 934 36 72607 100 0\n'
@@ -131,6 +133,28 @@ trend_ro|all)   # a trend.txt that does not read (mode 200): it stays as it is, 
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE TREND=$TREND_SEED TREND_RO=1 scn trend_ro "4:CROSS 12:CROSS 120:RIGHT 122:RIGHT 130:SNAP=trend_ro 131:EXIT"
     chmod 600 $P/build/sbx/trend_ro/dev_hdd0/tmp/ps3_health/trend.txt
     print -rn -- "$TREND_SEED" | cmp -s - $P/build/sbx/trend_ro/dev_hdd0/tmp/ps3_health/trend.txt && print "trend_ro: trend.txt unchanged" || print "trend_ro: trend.txt CHANGED" ;|
+spu_prompt|all)   # the SPU prompt at the first SQUARE, CROSS runs the test; the second SQUARE asks nothing
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn spu_prompt "$MEM 18:SQUARE 26:SNAP=spu_prompt 28:CROSS 1000:SQUARE 2000:SNAP=spu_prompt_after 2001:EXIT"
+    sed 's/^/  /' $SBX/spu_prompt/dev_hdd0/tmp/ps3_health/journal.txt ;|
+mem_ls|all)   # J_DONE: no prompt; the report after CIRCLE
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn mem_ls "$MEM 18:SQUARE 1000:SNAP=mem_ls 1002:CIRCLE 1010:SNAP=home_mem_ls 1011:EXIT"
+    grep -h -A1 "SPU local store" $SBX/mem_ls/dev_hdd0/tmp/ps3_health/report-*.txt ;|
+mem_ls_fault|all)   # one bit stuck at 1 in SPU 3's local store
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn mem_ls_fault "$MEM 18:SQUARE 1000:SNAP=mem_ls_fault 1002:CIRCLE 1010:SNAP=home_mem_ls_fault 1011:EXIT" PV_LS_FAULT=3
+    grep -h -A2 "SPU local store" $SBX/mem_ls_fault/dev_hdd0/tmp/ps3_health/report-*.txt ;|
+mem_ls_skip|all)   # CIRCLE at the prompt; SQUARE again shows the skip and asks nothing
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn mem_ls_skip "$MEM 18:SQUARE 26:CIRCLE 34:SNAP=mem_ls_skip 36:SQUARE 44:SNAP=mem_ls_skip_again 45:EXIT"
+    sed 's/^/  /' $SBX/mem_ls_skip/dev_hdd0/tmp/ps3_health/journal.txt ;|
+mem_ls_late|all)   # SPU 2 never reports: after 2 s the six are terminated and joined
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn mem_ls_late "$MEM 18:SQUARE 1000:SNAP=mem_ls_late 1002:CIRCLE 1010:EXIT" PV_SPU_LATE=2
+    grep -h -A1 "SPU local store" $SBX/mem_ls_late/dev_hdd0/tmp/ps3_health/report-*.txt
+    sed -n '/spu_init/,$s/^/  /p' $SBX/mem_ls_late/dev_hdd0/tmp/ps3_health/journal.txt ;|
+mem_ls_stall|all)   # SPU 3 stops after pass 5: after 5 s the six are terminated and joined
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn mem_ls_stall "$MEM 18:SQUARE 1000:SNAP=mem_ls_stall 1002:CIRCLE 1010:EXIT" PV_SPU_STALL=3,5
+    grep -h -A1 "SPU local store" $SBX/mem_ls_stall/dev_hdd0/tmp/ps3_health/report-*.txt
+    sed -n '/spu_init/,$s/^/  /p' $SBX/mem_ls_stall/dev_hdd0/tmp/ps3_health/journal.txt ;|
+mem_ls_nofs|all)   # no writable app folder: no journal, so no SPU call and no prompt
+    SAFE=$DEF_SAFE STATE= JOURNAL= NOFS=1 scn mem_ls_nofs "$MEM 18:SQUARE 26:SNAP=mem_ls_nofs 27:EXIT" ;|
 esac
 ${PYTHON:-python3} -I - "$OUT" <<'PY'
 import glob, os, sys

@@ -17,8 +17,8 @@ and no opening the console. Six modules behind one home screen:
   test patterns (with a 1-pixel stripe test for TV scaling) and a lag timer.
 - **Transfer:** the 64 MB file test on a USB stick, a 50 MB download over plain
   HTTP, and a LAN test where the app is the server and a PC sends it data.
-- **Memory:** pattern tests on the user memory (XDR) and on the RSX memory
-  (GDDR3).
+- **Memory:** pattern tests on the user memory (XDR), on the RSX memory
+  (GDDR3), and on the local store of each of the six SPUs.
 
 Help (TRIANGLE on the home screen) has a QR code that opens a prefilled GitHub
 issue with the compatibility report, and a short guide.
@@ -231,6 +231,20 @@ memory (GDDR3) through its mapping, two patterns; it is slow by design, and
 the blocks stay taken until the app exits (the RSX allocator gives nothing
 back). Both write only to memory the app allocated. CIRCLE stops a test.
 
+SQUARE tests the local store of each of the six SPUs, the Cell's helper
+cores. The app runs its own SPU program (ps3gfx's SPU kit) as one group of
+six SPU threads, and each thread tests about 234 KB of its own 256 KB local
+store: all of it but the program and the top 16 KB, which the stack keeps. A
+pass is March C- on two backgrounds, then a write and a read of each word's
+own address; the test makes 16 passes. It should take well under a second
+(an estimate from its instruction count: the report has the time the SPUs
+measure). A wrong read is an error, shown with its SPU, its local-store
+address, the word written and the word read. The SPU test cannot be stopped
+with CIRCLE: the app waits up to 5 s for its end, then stops the SPUs
+itself. The first SQUARE asks before the SPUs run (a first-run prompt, see
+Safety). Without a writable app folder there is no journal, and the SPU test
+does not run.
+
 ### Files on the console
 
 In `/dev_hdd0/tmp/ps3_health/`:
@@ -296,13 +310,28 @@ The other system calls, all read-only and journaled like the drive calls:
 383 `sys_game_get_temperature` (Cell and RSX) and, behind a first-run prompt,
 409 `sys_sm_get_fan_policy` (the fan duty). The speed and USB tests use the
 normal file calls, the Transfer module the normal socket calls, the Memory
-module its own allocations, the Display module the video state read. The
-network start (the first open of Transfer) and the copy to a USB stick
-(SELECT) are journaled too. (Raw sector reads, syscall 602, and the console
-id, syscall 870, are refused on HEN: ENXIO and EPERM on the test console. The
-app does not call them.) The build checks this: `tools/syscalls.py` scans the
-ELF for every syscall number and fails on 602, 604 or 870, or on a number
-outside `tools/syscalls.allow`.
+module's XDR and RSX tests their own allocations, the Display module the
+video state read. The network start (the first open of Transfer) and the
+copy to a USB stick (SELECT) are journaled too. (Raw sector reads, syscall
+602, and the console id, syscall 870, are refused on HEN: ENXIO and EPERM on
+the test console. The app does not call them.) The build checks this:
+`tools/syscalls.py` scans the ELF for every syscall number and fails on 602,
+604 or 870, or on a number outside `tools/syscalls.allow`.
+
+The Memory module's SPU test runs the app's own program on the six SPUs,
+behind a first-run prompt (asked once; a skip is kept until SQUARE twice
+clears the journal). It uses LV2's SPU calls: 169 `sys_spu_initialize` (once
+per start of the app), 170 to 173 (create the SPU thread group, destroy it,
+a thread in it, start it), 177 and 178 (terminate and join the group) and
+165 (a thread's exit status), plus the image import and close, which are
+calls into the firmware's library. Each call is journaled, and so is the
+test while the SPUs run, so a freeze at any step keeps the SPU test off
+until the journal is cleared. The SPUs write only to their own local stores
+and one 128-byte report each in the app's memory. The app ends the group
+itself: the join only after each thread reported its end, else a terminate
+first, so it never waits on a thread that can still run. A group that does
+not stop stays up: the SPU test then stays off until the app exits, and the
+exit makes one more terminate.
 
 Sending ATA commands to the internal drive from a PS3 app was new ground. While
 we tested, one other method (syscall 604 with LV1 command 0x22) **froze the
@@ -389,16 +418,19 @@ lines that write the RSX command words themselves, no librsx), the text (Inter
 atlases, one quad per glyph, pixel exact at 1080p, tabular digits for tables
 and counters), the drawing kit, the pad, the blocking call in a second thread
 with a counter, the first-run prompt, the visible-area screen, the freeze
-journal and the file helpers. The app links `libps3gfx.a` and includes
-`<ps3gfx/ui.h>`, `<ps3gfx/gfx.h>`, `<ps3gfx/journal.h>` and `<ps3gfx/fs.h>`;
+journal and the file helpers, and the SPU kit (an SPU program and its
+contract). The app links `libps3gfx.a` and includes `<ps3gfx/ui.h>`,
+`<ps3gfx/gfx.h>`, `<ps3gfx/journal.h>`, `<ps3gfx/fs.h>` and
+`<ps3gfx/spu_kit.h>`;
 the library's README has the API by header, and its `source/gfx/README.md` the
 frame model, the memory layout, the source of each RSX word and the recipe for
 the shader words. What stays here: `main.c` and `app.h` (the modules behind
 the `module` struct), `home.c` (the home screen and `state.txt`), `help.c`
 (the Help screen with the QR code), `report.c` (the report and the USB copy),
 one `mod_*.c` per module, `ata.c` and `smart.c` (the drive access and the
-decoders), `trend.c` (the lines of `trend.txt`), the vendor table, the
-compatibility text and the QR encoder.
+decoders), `trend.c` (the lines of `trend.txt`), `spu_run.c` (the SPU
+driver: the journaled group of six SPU threads of the SPU kit), the vendor
+table, the compatibility text and the QR encoder.
 
 ## Build
 
