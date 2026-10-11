@@ -269,6 +269,15 @@ int smart_counter(uint8_t id)
     return 0;
 }
 
+/* The error counters the drive has, added up (raw, low 32 bits): 0 when it has none. */
+long long smart_error_sum(const smart_data *s)
+{
+    long long sum = 0;
+    for (int i = 0; i < s->count; i++)
+        if (smart_counter(s->a[i].id)) sum += (long long)(s->a[i].raw & 0xFFFFFFFFull);
+    return sum;
+}
+
 static void add_why(char *why, int len, const char *msg)
 {
     int n = strlen(why);
@@ -327,6 +336,15 @@ const smart_attr *smart_find(const smart_data *s, uint8_t id)
     return NULL;
 }
 
+/* Bytes from the raw value of the host-writes attribute in its UNIT_*: -1 when the unit is not known. */
+double writes_bytes(uint64_t raw, int unit)
+{
+    if (unit == UNIT_LBA) return (double)raw * 512.0;
+    if (unit == UNIT_GIB) return (double)raw * 1073741824.0;
+    if (unit == UNIT_MIB32) return (double)raw * 33554432.0;
+    return -1;
+}
+
 /* Hours and cycles come from the low 32 bits: some vendors pack extra data in
  * the upper bytes of attribute 9. TB written only when the vendor states the unit. */
 void smart_summarize(const smart_data *s, int is_ssd, int vendor, smart_summary *o)
@@ -349,10 +367,7 @@ void smart_summarize(const smart_data *s, int is_ssd, int vendor, smart_summary 
         o->writes_id = v->writes_id;
         o->writes_unit = v->writes_unit;
         o->writes_raw = a->raw;
-        double bytes = -1;
-        if (v->writes_unit == UNIT_LBA) bytes = (double)a->raw * 512.0;
-        else if (v->writes_unit == UNIT_GIB) bytes = (double)a->raw * 1073741824.0;
-        else if (v->writes_unit == UNIT_MIB32) bytes = (double)a->raw * 33554432.0;
+        double bytes = writes_bytes(a->raw, v->writes_unit);
         if (bytes >= 0) o->tb_written = bytes / 1e12;
     }
 }

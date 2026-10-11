@@ -79,11 +79,33 @@ void write_report(void)
     report_rc = fs_write_file(report_path, rep, rlen, 0);
 }
 
-/* Copies the last report and the freeze journal to the first USB stick, into
- * ps3_health/: 0, USB_NONE when no stick, USB_FROZEN when the copy froze this
- * console before, else the write rc (-1: short write). The copy is one
- * journaled call. The journal is read before its start line, so the copy on
- * the stick holds no open start of its own. */
+/* A file to another in pieces of buf, since trend.txt has no size limit: the
+ * first piece replaces dst, the others are appended. When nothing is copied
+ * (src missing or empty, or its first piece not copied), dst is removed: no
+ * older copy, from another console or an earlier install, stays beside the
+ * new report. A src that is there but does not open or read leaves dst as it
+ * is, as trend_append leaves src: on a failing drive, dst can be the last copy
+ * that reads. (The writes go through fs_write_file: an inlined write syscall
+ * in the loop got its li r11 hoisted out of the syscall audit's view.) */
+static void copy_file(const char *src, const char *dst, char *buf, u64 n)
+{
+    sysFSStat st;
+    s32 fd, rc = 0;
+    u64 r = 0;
+    int first = 1;
+    if (sysLv2FsOpen(src, SYS_O_RDONLY, &fd, 0, NULL, 0) == 0) {
+        while ((rc = sysLv2FsRead(fd, buf, n, &r)) == 0 && r > 0 && fs_write_file(dst, buf, r, !first) == 0) first = 0;
+        sysLv2FsClose(fd);
+    } else if (sysLv2FsStat(src, &st) == 0) rc = -1;     /* there, but it does not open: as a failed read */
+    if (first && !rc) fs_remove(dst);
+}
+
+/* Copies the last report, the freeze journal and trend.txt to the first USB
+ * stick, into ps3_health/: 0, USB_NONE when no stick, USB_FROZEN when the
+ * copy froze this console before, else the report's write rc (-1: short
+ * write). The copy is one journaled call. The journal is read before its
+ * start line, so the copy on the stick holds no open start of its own. A
+ * trend.txt that this console does not have is removed from the stick. */
 #define USB_NONE 1
 #define USB_FROZEN 2
 static int report_copy_usb(char *dst, int n)
@@ -106,6 +128,11 @@ static int report_copy_usb(char *dst, int n)
         char jdst[64];
         snprintf(jdst, sizeof jdst, "%s/journal.txt", dir);
         fs_write_file(jdst, jtext, (u64)jlen, 0);
+    }
+    if (rc == 0) {                           /* the drive's readings over time (rc ignored, as the journal's); jtext is free now */
+        char tdst[64];
+        snprintf(tdst, sizeof tdst, "%s/trend.txt", dir);
+        copy_file(TREND_FILE, tdst, jtext, sizeof jtext);
     }
     journal_done("usb_copy", rc, rc == 0);
     return rc;

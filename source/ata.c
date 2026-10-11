@@ -24,6 +24,7 @@
 #include "vendor.h"
 #include "version.h"
 #include "report.h"
+#include "trend.h"
 
 #define ATA_HDD        0x0101000000000007ULL
 #define LV1_ATA        2        /* LV1_STORAGE_SEND_ATA_COMMAND */
@@ -278,6 +279,16 @@ int console_utc_offset(void)
     return (console_tz + (console_summer ? 60 : 0)) * 60;
 }
 
+/* The local date and time of the home tiles and of trend.txt: the console's
+ * clock plus its time zone, UTC when the zone was not read. */
+void local_tm(struct tm *tm)
+{
+    u64 sec = 0, nsec = 0;
+    sysGetCurrentTime(&sec, &nsec);
+    time_t t = (time_t)sec + console_utc_offset();
+    gmtime_r(&t, tm);
+}
+
 /* The Cell and RSX temperatures for the drive pages (syscall 383, journaled like the drive commands). */
 void console_info(drive_state *d)
 {
@@ -421,7 +432,9 @@ int drive_read_gpl(drive_state *d)
     return d->gpl_rc ? d->gpl_rc : d->phy_rc;
 }
 
-/* full = 0: SMART data only (self-test progress); 1: also thresholds and the self-test log. */
+/* full = 0: SMART data only (self-test progress); 1: also thresholds and the
+ * self-test log, and a line in trend.txt at the next report. A failed read
+ * keeps the earlier data, so the line waits for a read that worked. */
 int drive_read_smart(drive_state *d, int full)
 {
     d->dumps_dirty = 1;
@@ -433,6 +446,7 @@ int drive_read_smart(drive_state *d, int full)
     if (full) {
         d->thresh_rc = smart_read(d, "smart_thresh", 0xD1, 0, d->thresh, &d->have_thresh);
         d->stlog_rc = smart_read(d, "selftest_log", 0xD5, 0x06, d->stlog, &d->have_stlog);
+        if (d->smart_rc == 0) d->trend_due = 1;
     }
     if (d->have_smart) {
         smart_parse(d->smart, d->have_thresh ? d->thresh : NULL, &d->s);
@@ -586,6 +600,62 @@ int compat_body(const drive_state *d, char *out, int n)
     return j;
 }
 
+/* The line of the last full read goes into trend.txt (trend.h) after the
+ * others when the first line names this drive, on a line of its own when the
+ * file does not end in a line end (a cut write, a hand edit). Else the file
+ * starts again with this drive's name: another drive, or no file yet, gets a
+ * new file. A file that is there but does not open or read stays as it is,
+ * and trend_rc shows the rc: fs_read_line gives -1 or 0 for a read error too,
+ * and a failing drive can give one. No journal entry: the file calls of every
+ * other write. The rc and the count are not in drive_state, so the self-test
+ * poll's copy of D never writes them back. */
+int trend_rc, trend_seq;
+
+/* 1 when the last byte of trend.txt is not a line end. The calls of
+ * trend_load: the open, the two seeks, the read and the close. */
+static int trend_cut_end(void)
+{
+    s32 fd;
+    u64 size = 0, pos = 0, got = 0;
+    char c = '\n';
+    if (sysLv2FsOpen(TREND_FILE, SYS_O_RDONLY, &fd, 0, NULL, 0)) return 0;
+    if (sysLv2FsLSeek64(fd, 0, SEEK_END, &size) == 0 && size > 0 && sysLv2FsLSeek64(fd, size - 1, SEEK_SET, &pos) == 0)
+        sysLv2FsRead(fd, &c, 1, &got);
+    sysLv2FsClose(fd);
+    return got == 1 && c != '\n';
+}
+
+static void trend_append(drive_state *d)
+{
+    char line[80], head[96], t[160], *h;
+    struct tm tm;
+    sysFSStat st;
+    s32 fd, rc;
+    u64 got = 0;
+    int n;
+    d->trend_due = 0;
+    local_tm(&tm);
+    trend_line(line, sizeof line, &tm, &d->s, &d->sum);
+    head[0] = 0;
+    rc = sysLv2FsOpen(TREND_FILE, SYS_O_RDONLY, &fd, 0, NULL, 0);
+    if (rc == 0) {
+        rc = sysLv2FsRead(fd, head, sizeof head - 1, &got);
+        sysLv2FsClose(fd);
+        head[rc ? 0 : got] = 0;
+    } else if (sysLv2FsStat(TREND_FILE, &st)) rc = 0;     /* no file yet */
+    head[strcspn(head, "\r\n")] = 0;         /* line 1, from its first character that is not blank */
+    h = head + strspn(head, " \t");
+    if (rc) trend_rc = rc;
+    else if (!strncmp(h, "drive ", 6) && model_match(h + 6, d->id.model)) {
+        n = snprintf(t, sizeof t, "%s%s\n", trend_cut_end() ? "\n" : "", line);
+        trend_rc = fs_write_file(TREND_FILE, t, (u64)n, 1);
+    } else {
+        n = snprintf(t, sizeof t, "drive %s\n%s\n", d->id.model, line);
+        trend_rc = fs_write_file(TREND_FILE, t, (u64)n, 0);
+    }
+    trend_seq++;
+}
+
 void drive_report(drive_state *d, const char *when)
 {
     rep_out("--- drive ---\n");
@@ -709,5 +779,6 @@ void drive_report(drive_state *d, const char *when)
     if (d->have_devstat) fs_write_file(APP_DIR "/devstat.bin", d->devstat, 512, 0);
     if (d->have_phy) fs_write_file(APP_DIR "/phy.bin", d->phylog, 512, 0);
     fs_write_file(APP_DIR "/devinfo.bin", d->info_raw, sizeof d->info_raw, 0);
+    if (d->trend_due) trend_append(d);       /* several full reads before one report give one line */
 }
 

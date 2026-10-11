@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <sys/systime.h>
 #include "app.h"
 #include <ps3gfx/ui.h>
 #include "report.h"
@@ -88,11 +87,8 @@ void state_set(const char *key, int dot, const char *l1, const char *l2)
 {
     int k = tile_index(key);
     if (k < 0) return;
-    u64 sec = 0, nsec = 0;
-    sysGetCurrentTime(&sec, &nsec);
-    time_t tt = (time_t)sec + console_utc_offset();   /* the local date: the console's time zone, UTC when not read */
     struct tm tm;
-    gmtime_r(&tt, &tm);
+    local_tm(&tm);                           /* the local date: the console's time zone, UTC when not read */
     tiles[k].dot = dot;
     snprintf(tiles[k].when, sizeof tiles[k].when, "%04d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
     snprintf(tiles[k].l1, sizeof tiles[k].l1, "%.44s", l1 ? l1 : "");

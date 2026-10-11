@@ -103,11 +103,13 @@ int phy_parse(const uint8_t *buf, phy_counters *o);
 int selftest_parse(const uint8_t *buf, selftest_log *out);
 const char *smart_attr_name(uint8_t id);
 int smart_counter(uint8_t id);
+long long smart_error_sum(const smart_data *s);   /* the raw low 32 bits of the error counters (smart_counter) the drive has, added up */
 const char *selftest_status_text(uint8_t status_byte);
 const char *selftest_type_text(uint8_t type);
 int smart_health(const smart_data *s, const selftest_log *log, int temp_limit, char *why, int whylen);
 const smart_attr *smart_find(const smart_data *s, uint8_t id);
 void smart_summarize(const smart_data *s, int is_ssd, int vendor, smart_summary *o);
+double writes_bytes(uint64_t raw, int unit);      /* bytes from the host-writes raw value in its UNIT_* (vendor.h); -1 for an unknown unit */
 int smart_delta(const smart_data *now, const smart_data *prev, uint8_t id, long long *delta);
 int sector_checksum(const uint8_t *buf);
 int model_match(const char *a, const char *b);

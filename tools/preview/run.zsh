@@ -12,7 +12,9 @@ DRIVE=${PV_DRIVE:-$HOME/.local/share/ps3-health/drive}
 mkdir -p $OUT
 J_DONE=$'done error_log rc=0x00000000 ok=1\ndone gpl_devstat rc=0x00000000 ok=1\ndone gpl_phy rc=0x00000000 ok=1\ndone fan_policy rc=0x00000000 ok=1\n'
 DEF_SAFE='67 38 1853 1042'
-scn() {   # name script [VAR=value ...]; SAFE, STATE, JOURNAL, DEMO from the caller
+# trend.txt of the test SSD: readings kept by hand, in local time (the preview's clock adds 2026-10-08 09:00)
+TREND_SEED=$'drive Dahua V800 2.5 inch SATA 1TB SSD\n2026-10-06 16:52 918 38 72018 100 0\n2026-10-06 19:45 921 36 72132 100 0\n2026-10-07 19:52 934 36 72607 100 0\n'
+scn() {   # name script [VAR=value ...]; SAFE, STATE, JOURNAL, TREND, DEMO from the caller
     local name=$1 script=$2
     shift 2
     local sbx=$P/build/sbx/$name
@@ -23,6 +25,8 @@ scn() {   # name script [VAR=value ...]; SAFE, STATE, JOURNAL, DEMO from the cal
     [[ -n $SAFE ]] && print -r -- "$SAFE" > $sbx/dev_hdd0/tmp/ps3_health/safe_area.txt
     [[ -n $STATE ]] && print -rn -- "$STATE" > $sbx/dev_hdd0/tmp/ps3_health/state.txt
     [[ -n $JOURNAL ]] && print -rn -- "$JOURNAL" > $sbx/dev_hdd0/tmp/ps3_health/journal.txt
+    [[ -n $TREND ]] && print -rn -- "$TREND" > $sbx/dev_hdd0/tmp/ps3_health/trend.txt
+    [[ -n $TREND_RO ]] && chmod 200 $sbx/dev_hdd0/tmp/ps3_health/trend.txt
     [[ -n $NOFS ]] && chmod 555 $sbx/dev_hdd0/tmp/ps3_health
     if [[ -n $DEMO ]]; then mkdir -p $sbx/dev_hdd0/tmp/ps3_health/demo; cp $DRIVE/*.bin $sbx/dev_hdd0/tmp/ps3_health/demo/ 2>/dev/null; fi
     env PV_ROOT=$sbx PV_DRIVE=$DRIVE PV_OUT=$OUT PV_SCRIPT="$script" "$@" $P/build/pv 2>&1 | grep -v '^snap' | head -5
@@ -42,7 +46,8 @@ running|all)
 probe|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn probe "4:CROSS 12:CROSS 120:SNAP=probe 121:EXIT" PV_DRIVE=/nonexistent ;|
 demo|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= DEMO=1 scn demo "4:CROSS 12:TRIANGLE 80:SNAP=demo_attr 81:EXIT" ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL= TREND=$TREND_SEED DEMO=1 scn demo "4:CROSS 12:TRIANGLE 80:SNAP=demo_attr 82:RIGHT 84:RIGHT 92:SNAP=demo_trend 93:EXIT"
+    print -rn -- "$TREND_SEED" | cmp -s - $P/build/sbx/demo/dev_hdd0/tmp/ps3_health/trend.txt && print "demo: trend.txt unchanged" || print "demo: trend.txt CHANGED" ;|
 cool|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn cool "4:RIGHT 6:CROSS 14:SNAP=prompt_fan 16:CROSS 60:SNAP=cool_main 62:CROSS 3000:SNAP=cool_load 7400:SNAP=cool_result 7401:EXIT" PV_RISE=1 ;|
 pad|all)
@@ -99,6 +104,33 @@ copy_frozen|all)
     cat $P/build/sbx/copy_frozen/dev_usb000/ps3_health/journal.txt
     SAFE=$DEF_SAFE STATE= JOURNAL=$'start usb_copy\n' NOFS=1 scn copy_frozen_nofs "3:SELECT 10:SNAP=copy_frozen_nofs 11:EXIT"
     cat $P/build/sbx/copy_frozen_nofs/dev_hdd0/tmp/ps3_health/journal.txt ;|
+trend|all)   # the open adds a line to the seed, CROSS another; SELECT copies trend.txt
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE TREND=$TREND_SEED scn trend "4:CROSS 12:CROSS 120:RIGHT 122:RIGHT 130:SNAP=trend 132:CROSS 240:SNAP=trend_reread 242:SELECT 270:SNAP=trend_usb 271:EXIT"
+    cat $P/build/sbx/trend/dev_hdd0/tmp/ps3_health/trend.txt
+    cmp -s $P/build/sbx/trend/dev_hdd0/tmp/ps3_health/trend.txt $P/build/sbx/trend/dev_usb000/ps3_health/trend.txt &&
+        print "trend: the copy on the stick is the same" || print "trend: the copy on the stick DIFFERS" ;|
+trend_1600|all)
+    SAFE='160 90 1760 990' STATE= JOURNAL=$J_DONE TREND=$TREND_SEED scn trend_1600 "4:CROSS 12:CROSS 120:RIGHT 122:RIGHT 130:SNAP=trend_1600 131:EXIT" ;|
+trend_newdrive|all)   # another drive's file: the open starts it again
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE TREND=$'drive Samsung SSD 870 EVO 1TB\n2026-09-01 10:00 100 30 5000 99 0\n' scn trend_newdrive "4:CROSS 12:CROSS 120:RIGHT 122:RIGHT 130:SNAP=trend_newdrive 131:EXIT"
+    cat $P/build/sbx/trend_newdrive/dev_hdd0/tmp/ps3_health/trend.txt ;|
+trend_one|all)   # no file yet
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn trend_one "4:CROSS 12:CROSS 120:RIGHT 122:RIGHT 130:SNAP=trend_one 131:EXIT"
+    cat $P/build/sbx/trend_one/dev_hdd0/tmp/ps3_health/trend.txt ;|
+trend_cut|all)   # over 8 KB: the first read and the tail; two unreadable lines; a last CR line with no line end (a cut write)
+    seed=$'drive Dahua V800 2.5 inch SATA 1TB SSD\n2024-12-30 10:00 0 30 0 100 0\n'
+    for i in {0..299}; do
+        printf -v l '2025-%02d-%02d 10:00 %d %d %d 100 0\n' $((1 + i / 28)) $((1 + i % 28)) $((3 * i + 3)) $((30 + i % 9)) $((240 * i + 240))
+        seed+=$l
+        (( i == 290 )) && seed+=$'not a trend line\n2025-11-12 10:00 873 31\n'
+    done
+    seed+=$'2025-11-21 10:00 903 33 72240 100 0\r'
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE TREND=$seed scn trend_cut "4:CROSS 12:CROSS 120:RIGHT 122:RIGHT 130:SNAP=trend_cut 132:R1 134:DOWN 140:SNAP=trend_cut_scroll 141:EXIT"
+    print "trend_cut: $(wc -c < $P/build/sbx/trend_cut/dev_hdd0/tmp/ps3_health/trend.txt | tr -d ' ') bytes" ;|
+trend_ro|all)   # a trend.txt that does not read (mode 200): it stays as it is, and the page shows the rc
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE TREND=$TREND_SEED TREND_RO=1 scn trend_ro "4:CROSS 12:CROSS 120:RIGHT 122:RIGHT 130:SNAP=trend_ro 131:EXIT"
+    chmod 600 $P/build/sbx/trend_ro/dev_hdd0/tmp/ps3_health/trend.txt
+    print -rn -- "$TREND_SEED" | cmp -s - $P/build/sbx/trend_ro/dev_hdd0/tmp/ps3_health/trend.txt && print "trend_ro: trend.txt unchanged" || print "trend_ro: trend.txt CHANGED" ;|
 esac
 ${PYTHON:-python3} -I - "$OUT" <<'PY'
 import glob, os, sys

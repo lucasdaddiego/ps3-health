@@ -1,8 +1,11 @@
-/* Mac-side test of the pure C layer (smart.c, vendor.c, compat.c, qrcodegen.c)
- * with synthetic sectors laid out as ACS-3 says. build.sh and CI run it. */
+/* Mac-side test of the pure C layer (smart.c, vendor.c, trend.c, compat.c,
+ * qrcodegen.c) with synthetic sectors laid out as ACS-3 says. build.sh and CI
+ * run it. */
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include "../source/smart.h"
+#include "../source/trend.h"
 #include "../source/vendor.h"
 #include "../source/compat.h"
 #include "../source/version.h"
@@ -262,6 +265,79 @@ int main(void)
     CHECK(phy_parse(ph, &pc) == 0 && pc.count == 3 && pc.icrc == 7 && pc.comreset == 3 && pc.crc_h2d == 2 && pc.phy_nrdy == -1);
     memset(ph, 0, sizeof ph);
     CHECK(phy_parse(ph, &pc) == -1);
+
+    /* the host-writes unit math, and the error counters added up */
+    CHECK(writes_bytes(3, UNIT_LBA) == 1536.0 && writes_bytes(2, UNIT_GIB) == 2147483648.0);
+    CHECK(writes_bytes(72607, UNIT_MIB32) == 72607.0 * 33554432.0 && writes_bytes(72607, UNIT_NONE) < 0);
+    memset(data, 0, 512);
+    attr(data, 0, 9, 100, 100, 934); attr(data, 1, 5, 100, 100, 2);
+    attr(data, 2, 199, 100, 100, 0x00FF00000003ull);   /* 3 in the low 32 bits */
+    attr(data, 3, 12, 100, 100, 40); seal(data);       /* 12 is no error counter */
+    smart_parse(data, NULL, &s);
+    CHECK(smart_error_sum(&s) == 5);
+    memset(data, 0, 512); attr(data, 0, 9, 100, 100, 934); seal(data);
+    smart_parse(data, NULL, &s);
+    CHECK(smart_error_sum(&s) == 0);
+
+    /* trend.txt: a line, and the same values back */
+    struct tm when;
+    memset(&when, 0, sizeof when);
+    when.tm_year = 2026 - 1900; when.tm_mon = 9; when.tm_mday = 7; when.tm_hour = 19; when.tm_min = 52;
+    memset(data, 0, 512);
+    attr(data, 0, 9, 96, 100, 934); attr(data, 1, 194, 64, 50, 0x0032001E0024ull);   /* 36 C */
+    attr(data, 2, 202, 100, 100, 100); attr(data, 3, 241, 100, 100, 72607);
+    attr(data, 4, 5, 100, 100, 1); attr(data, 5, 199, 100, 100, 2); seal(data);
+    smart_parse(data, NULL, &s);
+    smart_summarize(&s, 1, VENDOR_MAXIO, &m);
+    char tl[96];
+    trend_rec tr;
+    int len = trend_line(tl, sizeof tl, &when, &s, &m);
+    CHECK(len == (int)strlen(tl) && !strcmp(tl, "2026-10-07 19:52 934 36 72607 100 3"));
+    CHECK(trend_parse(tl, &tr) == 0 && tr.year == 2026 && tr.month == 10 && tr.day == 7 && tr.hour == 19 && tr.minute == 52);
+    CHECK(tr.hours == 934 && tr.temp == 36 && tr.writes == 72607 && tr.life == 100 && tr.errors == 3);
+    /* not reported: no 194/190, no life or writes attribute, hours with bit 31 set */
+    memset(data, 0, 512); attr(data, 0, 9, 100, 100, 0x80000001ull); seal(data);
+    smart_parse(data, NULL, &s);
+    smart_summarize(&s, 0, VENDOR_UNKNOWN, &m);
+    trend_line(tl, sizeof tl, &when, &s, &m);
+    CHECK(!strcmp(tl, "2026-10-07 19:52 -1 -1 -1 -1 0"));
+    CHECK(trend_parse(tl, &tr) == 0 && tr.hours == -1 && tr.temp == -1 && tr.writes == -1 && tr.life == -1 && tr.errors == 0);
+    /* the longest line: 63 characters, 64 bytes with the line end */
+    static const int ctr[] = {5, 10, 184, 187, 196, 197, 198, 199};
+    memset(data, 0, 512);
+    for (int k = 0; k < 8; k++) attr(data, k, ctr[k], 100, 100, 0xFFFFFFFFull);
+    attr(data, 8, 9, 100, 100, 0x7FFFFFFFull); attr(data, 9, 194, 100, 100, 0xFF);
+    attr(data, 10, 202, 100, 100, 0); attr(data, 11, 241, 100, 100, 0xFFFFFFFFFFFFull); seal(data);
+    smart_parse(data, NULL, &s);
+    smart_summarize(&s, 1, VENDOR_MAXIO, &m);
+    len = trend_line(tl, sizeof tl, &when, &s, &m);
+    CHECK(len == 63 && trend_parse(tl, &tr) == 0 && tr.hours == 2147483647 && tr.temp == 255);
+    CHECK(tr.writes == 281474976710655ll && tr.life == 100 && tr.errors == 8 * 4294967295ll);
+    static const char *const bad[] = {
+        "drive Dahua V800 2.5 inch SATA 1TB SSD",          /* the header */
+        "",                                                /* a blank line */
+        "2026-10-07 19:52 934 36 72607 100",               /* cut at the end */
+        "26-10-07 19:52 934 36 72607 100 3",               /* cut inside the year */
+        "2026-10-07 19:52 934 36 72607 100 32026-10-08 09:00 950 37 72700 100 3",   /* two lines joined */
+        "2026-10-07 19:52 934 36 72607 100 3 7",           /* an extra field */
+        "2026-10-07 19:52 934 36 72607 100 3 ",            /* a space at the end */
+        " 2026-10-07 19:52 934 36 72607 100 3",            /* a space before */
+        "2026-10-07 19:52 934 36 72607 100 3\r\r",         /* two CRs */
+        "2026-00-07 19:52 934 36 72607 100 3", "2026-13-07 19:52 934 36 72607 100 3",    /* month */
+        "2026-10-00 19:52 934 36 72607 100 3", "2026-10-32 19:52 934 36 72607 100 3",    /* day */
+        "2026-10-07 -1:52 934 36 72607 100 3", "2026-10-07 24:52 934 36 72607 100 3",    /* hour */
+        "2026-10-07 19:-1 934 36 72607 100 3", "2026-10-07 19:60 934 36 72607 100 3",    /* minute */
+        "2026-10-07 19:52 -2 36 72607 100 3",                                          /* power-on hours */
+        "2026-10-07 19:52 934 -2 72607 100 3", "2026-10-07 19:52 934 256 72607 100 3",  /* temperature */
+        "2026-10-07 19:52 934 36 -2 100 3",                                            /* host writes */
+        "2026-10-07 19:52 934 36 72607 -2 3", "2026-10-07 19:52 934 36 72607 101 3",    /* life */
+        "2026-10-07 19:52 934 36 72607 100 -1",                                        /* errors */
+    };
+    for (unsigned k = 0; k < sizeof bad / sizeof bad[0]; k++)
+        if (trend_parse(bad[k], &tr) != -1) { printf("FAIL: trend_parse took \"%s\"\n", bad[k]); fails++; }
+    CHECK(trend_parse("2026-10-07 19:52 934 36 72607 100 3\r", &tr) == 0 && tr.errors == 3);   /* one CR */
+    CHECK(trend_parse("2026-12-31 23:59 -1 255 -1 0 0", &tr) == 0 && tr.day == 31 && tr.temp == 255 && tr.life == 0);
+    CHECK(trend_parse("2026-01-01 00:00 0 -1 0 -1 0", &tr) == 0 && tr.month == 1 && tr.hour == 0 && tr.minute == 0);
 
     /* issue form URL */
     char enc[64], url[2400];

@@ -1,18 +1,21 @@
-/* The Drive module: IDENTIFY + SMART of the PS3's internal drive. Two pages:
- * the attribute table and a summary. Plus the speed test and the short and
- * extended self-tests. The QR code of the report is on the Help screen. */
+/* The Drive module: IDENTIFY + SMART of the PS3's internal drive. Three
+ * pages: the attribute table, a summary, and the trend of the full reads
+ * (trend.txt). Plus the speed test and the short and extended self-tests.
+ * The QR code of the report is on the Help screen. */
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
 #include <ppu-lv2.h>
 #include <lv2/systime.h>
+#include <sys/file.h>
 #include <sys/thread.h>
 #include <ps3gfx/ui.h>
 #include "app.h"
 #include "report.h"
+#include "trend.h"
 #include "vendor.h"
 
-#define PAGES 2
+#define PAGES 3
 #define ROW_H 36
 #define CT (TOP + 162)                       /* the pages start under the drive header */
 
@@ -321,6 +324,191 @@ static void draw_summary(void)
     else kv(y, "Speed test", GREY, "not run. R2 twice writes and reads a 64 MB file in the app folder.");
 }
 
+/* ---- the trend page: trend.txt -------------------------------------------- */
+
+#define TREND_TAIL 8191                      /* the end of the file that the page reads */
+#define TREND_MAX 304                        /* the tail holds at most 303 of the app's lines (27 bytes and more), and the first read */
+
+static trend_rec tr[TREND_MAX];              /* oldest first: tr[0] is the first read */
+static int tr_n, tr_bad, tr_cut;             /* records, unreadable lines, 1 when lines after the first read were not read */
+static int tr_seq = -1;                      /* the trend_seq of the last load */
+static float tc_hours, tc_temp, tc_life, tc_wr, tc_err;   /* the right edges of the columns */
+
+static void tr_add(const char *line)
+{
+    trend_rec r;
+    if (!strncmp(line, "drive ", 6)) return;         /* the header, not an unreadable line */
+    if (trend_parse(line, &r)) { tr_bad++; return; }
+    if (tr_n == TREND_MAX) {                 /* lines shorter than the app's: the first read and the newest stay */
+        memmove(tr + 1, tr + 2, (TREND_MAX - 2) * sizeof tr[0]);
+        tr_n--;
+        tr_cut = 1;
+    }
+    tr[tr_n++] = r;
+}
+
+/* trend.txt of this drive, read in the UI thread when the page draws after an
+ * append: the head (the first line must name this drive, the second is the
+ * first read), then at most the last 8 KB from the second line on. A longer
+ * file loses the cut first line of its tail, as journal_load does. */
+static void trend_load(void)
+{
+    static char buf[TREND_TAIL + 1];
+    char head[192];
+    s32 fd;
+    u64 size = 0, pos = 0, got = 0;
+    tr_n = tr_bad = tr_cut = 0;
+    tr_seq = trend_seq;
+    int n = fs_read_file(TREND_FILE, head, sizeof head - 1);
+    if (n <= 0) return;
+    head[n] = 0;
+    char *nl = strchr(head, '\n');
+    if (!nl || strncmp(head, "drive ", 6)) return;
+    *nl = 0;
+    if (!model_match(head + 6, D.id.model)) return;  /* another drive's file */
+    u64 second = (u64)(nl + 1 - head);
+    if (sysLv2FsOpen(TREND_FILE, SYS_O_RDONLY, &fd, 0, NULL, 0)) return;
+    sysLv2FsLSeek64(fd, 0, SEEK_END, &size);
+    tr_cut = size > second + TREND_TAIL;
+    sysLv2FsLSeek64(fd, tr_cut ? size - TREND_TAIL : second, SEEK_SET, &pos);
+    sysLv2FsRead(fd, buf, TREND_TAIL, &got);
+    sysLv2FsClose(fd);
+    buf[got] = 0;
+    char *p = buf;
+    if (tr_cut) {
+        char *e = strchr(nl + 1, '\n');      /* the first read, from the head */
+        if (e) { *e = 0; tr_add(nl + 1); }
+        p = strchr(buf, '\n');               /* the tail from its first whole line */
+        p = p ? p + 1 : buf + got;
+    }
+    while (*p) {                             /* empty lines are skipped */
+        char *e = strchr(p, '\n');
+        if (e) *e = 0;
+        if (*p) tr_add(p);
+        if (!e) break;
+        p = e + 1;
+    }
+}
+
+/* Host writes in TB with the vendor's unit, else the bare raw value (the
+ * header says raw: 12 digits fit the 210 px column); "-" when not reported. */
+static void tr_writes(float y, long long w, u32 c)
+{
+    double b = w < 0 ? -1 : writes_bytes((uint64_t)w, vendor_get(D.vendor)->writes_unit);
+    if (w < 0) text_r(tc_wr, y, F_BODY, DIM, "-");
+    else if (b < 0) text_r(tc_wr, y, F_BODY | TNUM, c, "%lld", w);
+    else text_r(tc_wr, y, F_BODY | TNUM, c, "%.3f TB", b / 1e12);
+}
+
+/* One read in the columns, the date from x: the colours of the attribute
+ * page, or all grey for the pinned first read. */
+static void tr_row(const trend_rec *r, float x, float y, int grey)
+{
+    u32 c = grey ? GREY : WHITE;
+    text(x, y, F_BODY | TNUM, c, "%04d-%02d-%02d %02d:%02d", r->year, r->month, r->day, r->hour, r->minute);
+    if (r->hours < 0) text_r(tc_hours, y, F_BODY, DIM, "-");
+    else text_r(tc_hours, y, F_BODY | TNUM, c, "%d h", r->hours);
+    if (r->temp < 0) text_r(tc_temp, y, F_BODY, DIM, "-");
+    else text_r(tc_temp, y, F_BODY | TNUM, grey ? GREY : r->temp >= D.sum.temp_limit ? YELLOW : WHITE, "%d C", r->temp);
+    if (r->life < 0) text_r(tc_life, y, F_BODY, DIM, "-");
+    else text_r(tc_life, y, F_BODY | TNUM, grey ? GREY : r->life <= 10 ? RED : WHITE, "%d%%", r->life);
+    tr_writes(y, r->writes, c);
+    text_r(tc_err, y, F_BODY | TNUM, grey ? GREY : r->errors > 0 ? YELLOW : WHITE, "%lld", r->errors);
+}
+
+/* The change from the first read to the newest: hours, the temperature range
+ * of the reads, life, host writes, error counts. */
+static void tr_change(float y)
+{
+    const trend_rec *a = &tr[0], *b = &tr[tr_n - 1];
+    int lo = 256, hi = -1;
+    for (int i = 0; i < tr_n; i++)
+        if (tr[i].temp >= 0) {
+            if (tr[i].temp < lo) lo = tr[i].temp;
+            if (tr[i].temp > hi) hi = tr[i].temp;
+        }
+    if (a->hours >= 0 && b->hours >= 0) text_r(tc_hours, y, F_BODY | TNUM, WHITE, "%+d h", b->hours - a->hours);
+    else text_r(tc_hours, y, F_BODY, DIM, "-");
+    if (hi < 0) text_r(tc_temp, y, F_BODY, DIM, "-");
+    else if (lo == hi) text_r(tc_temp, y, F_BODY | TNUM, WHITE, "%d C", hi);
+    else text_r(tc_temp, y, F_BODY | TNUM, WHITE, "%d to %d C", lo, hi);
+    if (a->life >= 0 && b->life >= 0) text_r(tc_life, y, F_BODY | TNUM, WHITE, "%+d%%", b->life - a->life);
+    else text_r(tc_life, y, F_BODY, DIM, "-");
+    int unit = vendor_get(D.vendor)->writes_unit;
+    if (a->writes < 0 || b->writes < 0) text_r(tc_wr, y, F_BODY, DIM, "-");
+    else if (writes_bytes(0, unit) < 0) text_r(tc_wr, y, F_BODY | TNUM, WHITE, "%+lld", b->writes - a->writes);
+    else text_r(tc_wr, y, F_BODY | TNUM, WHITE, "%+.1f GB",
+                (writes_bytes((uint64_t)b->writes, unit) - writes_bytes((uint64_t)a->writes, unit)) / 1e9);
+    long long de = b->errors - a->errors;
+    text_r(tc_err, y, F_BODY | TNUM, de > 0 ? YELLOW : WHITE, "%+lld", de);
+}
+
+/* The reads newest first in the frame of the attribute table, and two rows
+ * pinned at its foot: the first read and the change since. */
+static void draw_trend(int scroll)
+{
+    int rows = table_rows(), list = rows - 2;
+    float x0 = MG, x1 = SW - MG, h = 66 + rows * ROW_H;
+    card(x0, CT, x1 - x0, h);
+    float y = CT + 18;
+    if (D.demo) {
+        text(x0 + 32, y, F_BODY, GREY, "Not available in demo mode: demo reads add no line.");
+        return;
+    }
+    tc_err = x1 - 44;
+    tc_wr = tc_err - 180;
+    tc_life = tc_wr - 210;
+    tc_temp = tc_life - 130;
+    tc_hours = tc_temp - 190;
+    const vendor_info *v = vendor_get(D.vendor);   /* a host-writes attribute in no known unit: the cells hold its raw value */
+    text(x0 + 32, y, F_SMALL, GREY, "Read (local time)");
+    text_r(tc_hours, y, F_SMALL, GREY, "Power-on");
+    text_r(tc_temp, y, F_SMALL, GREY, "Drive temp");
+    text_r(tc_life, y, F_SMALL, GREY, "Life left");
+    text_r(tc_wr, y, F_SMALL, GREY, "Host writes%s", v->writes_id && writes_bytes(0, v->writes_unit) < 0 ? " (raw)" : "");
+    text_r(tc_err, y, F_SMALL, GREY, "Error counts");
+    y = CT + 56;
+    if (!tr_n) {
+        text(x0 + 32, y, F_BODY, GREY, "No read of this drive in trend.txt yet.");
+        return;
+    }
+    for (int r = 0; r < list && scroll + r < tr_n; r++, y += ROW_H) {
+        if (r & 1) rect(x0 + 10, y - 3, x1 - x0 - 20, ROW_H, PANEL2);
+        tr_row(&tr[tr_n - 1 - scroll - r], x0 + 32, y, 0);
+    }
+    if (tr_n > list) {                       /* a scroll bar on the right edge of the list */
+        float ty = CT + 56, th = list * ROW_H - 6;
+        round_rect(x1 - 22, ty, 6, th, 3, LINE);
+        round_rect(x1 - 22, ty + th * scroll / tr_n, 6, th * list / tr_n, 3, GREY);
+    }
+    y = CT + 56 + list * ROW_H;
+    rect(x0 + 20, y - 3, x1 - x0 - 40, 2, LINE);
+    float lx = text(x0 + 32, y, F_BODY, GREY, "First read");
+    tr_row(&tr[0], lx + 24, y, 1);
+    y += ROW_H;
+    if (tr_n == 1) text(x0 + 32, y, F_BODY, GREY, "One read so far: the next read adds a line.");
+    else {
+        text(x0 + 32, y, F_BODY, GREY, "Change since first read");
+        tr_change(y);
+    }
+}
+
+/* The status line of the page: the file, or a failed append. */
+static void trend_status(void)
+{
+    char first[16] = "";
+    float x, w = SW - 2 * MG;
+    if (trend_rc) {
+        status_linef(YELLOW, "Could not add the line to trend.txt: rc 0x%08x", (unsigned)trend_rc);
+        return;
+    }
+    if (tr_n) snprintf(first, sizeof first, "%04d-%02d-%02d", tr[0].year, tr[0].month, tr[0].day);
+    if (!tr_n) x = text_fit(MG, Y_STATUS, F_BODY, GREY, w, "trend.txt: no read of this drive");
+    else if (tr_cut) x = text_fit(MG, Y_STATUS, F_BODY, GREY, w, "trend.txt: the first read and the last %d, since %s", tr_n - 1, first);
+    else x = text_fit(MG, Y_STATUS, F_BODY, GREY, w, "trend.txt: %d %s since %s", tr_n, tr_n == 1 ? "read" : "reads", first);
+    if (tr_bad) text(x, Y_STATUS, F_BODY, DIM, ", %d unreadable", tr_bad);
+}
+
 /* After the speed test: the two rates, until any button. */
 static void speed_screen(void)
 {
@@ -359,7 +547,7 @@ static int running, seen_running;        /* the self-test state, with its functi
 
 static void draw_main(int page, int scroll, const char *st_msg, u32 st_color)
 {
-    static const char *const names[PAGES] = {"Attributes", "Summary"};
+    static const char *const names[PAGES] = {"Attributes", "Summary", "Trend"};
     tabs(names, PAGES, page);
     draw_header();
     if (!D.have_smart) {
@@ -369,7 +557,8 @@ static void draw_main(int page, int scroll, const char *st_msg, u32 st_color)
     } else {
         draw_health();
         if (page == 0) draw_attributes(scroll);
-        else draw_summary();
+        else if (page == 1) draw_summary();
+        else draw_trend(scroll);
     }
 
     char line[200];
@@ -380,6 +569,7 @@ static void draw_main(int page, int scroll, const char *st_msg, u32 st_color)
         status_line(line, BLUE);
     } else if (running) status_line("Self-test started, waiting for the first progress report. TRIANGLE shows the test screen.", BLUE);
     else if (st_msg) status_line(st_msg, st_color);
+    else if (page == 2) { if (D.have_smart && !D.demo) trend_status(); }
     else if (page == 0 && D.have_stlog && D.log.count) {
         snprintf(line, sizeof line, "Last self-test: %s, %s, at %u h", selftest_type_text(D.log.e[0].type),
                  selftest_status_text(D.log.e[0].status), D.log.e[0].hours);
@@ -392,7 +582,7 @@ static void draw_main(int page, int scroll, const char *st_msg, u32 st_color)
     /* only what works now: no re-read or speed test during a self-test or in demo mode */
     int idle = !running && !D.demo;
     const char *end = running ? "" : "  CIRCLE home  START exit";
-    if (page == 0)
+    if (page != 1)                           /* the attribute table and the trend scroll */
         snprintf(line, sizeof line, "LEFT/RIGHT page  UP/DOWN scroll  %s%s%sSELECT USB%s", idle ? "CROSS re-read  " : "",
                  running ? "TRIANGLE test screen  " : drive_can_selftest(&D) ? "TRIANGLE self-test  " : "",
                  idle ? "R2 twice speed test  " : "", end);
@@ -616,7 +806,7 @@ static void selftest_screen(void)
 
 static int run(void)
 {
-    int scroll = 0, page = 0;
+    int scroll = 0, page = 0, tscroll = 0;   /* the attribute table's scroll, the trend list's */
     running = seen_running = 0;
     log_before_count = 0;
     st_msg[0] = 0;
@@ -665,6 +855,13 @@ static int run(void)
             if (pressed & BTN_R1) scroll += rows;
             if (pressed & BTN_L1) scroll -= rows;
             scroll = scroll < 0 ? 0 : scroll > max_scroll ? max_scroll : scroll;
+        } else if (page == 2) {              /* the rows above the two pinned ones */
+            int list = rows - 2, max_t = tr_n > list ? tr_n - list : 0;
+            if (pressed & BTN_DOWN) tscroll++;
+            if (pressed & BTN_UP) tscroll--;
+            if (pressed & BTN_R1) tscroll += list;
+            if (pressed & BTN_L1) tscroll -= list;
+            tscroll = tscroll < 0 ? 0 : tscroll > max_t ? max_t : tscroll;
         }
 
         if ((pressed & BTN_CROSS) && !running && D.ata_ok && !D.demo) {
@@ -696,10 +893,14 @@ static int run(void)
             }
         }
         selftest_poll();
+        if (page == 2 && tr_seq != trend_seq && D.ata_ok && D.have_smart && !D.demo) {   /* a line was added since the last load */
+            trend_load();
+            tscroll = 0;
+        }
 
         begin_frame();
         title();
-        if (D.ata_ok && D.have_identify) draw_main(page, scroll, st_msg[0] ? st_msg : NULL, st_color);
+        if (D.ata_ok && D.have_identify) draw_main(page, page == 2 ? tscroll : scroll, st_msg[0] ? st_msg : NULL, st_color);
         else {
             draw_probe_screen();
             if (st_msg[0]) status_line(st_msg, st_color);

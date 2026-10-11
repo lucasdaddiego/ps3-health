@@ -5,10 +5,12 @@
 #define ATA_H
 
 #include <stdint.h>
+#include <time.h>
 #include "smart.h"
 
 #define APP_DIR "/dev_hdd0/tmp/ps3_health"
 #define DEMO_DIR APP_DIR "/demo"
+#define TREND_FILE APP_DIR "/trend.txt"   /* one line per full SMART read (trend.h) */
 
 typedef struct {
     int info_rc, open_rc, identify_rc;
@@ -25,6 +27,7 @@ typedef struct {
     uint8_t identify[512], smart[512], thresh[512], stlog[512], errlog[512];
     int have_identify, have_smart, have_thresh, have_stlog, have_errlog;
     int dumps_dirty;             /* a read happened since the .bin dumps and smart.when were written */
+    int trend_due;               /* a full SMART read since the last trend.txt line: the report adds one */
     int smart_rc, thresh_rc, stlog_rc, selftest_rc, errlog_rc;
     ata_identity id;
     smart_data s;
@@ -57,6 +60,8 @@ void console_firmware(void);                                /* fills console_fw,
 extern int console_tz, console_summer, console_tz_rc;       /* the time zone setting: TIMEZONE (minutes), SUMMERTIME, the TIMEZONE read's rc */
 void console_timezone(void);                                /* fills them, once at start, in the UI thread */
 int console_utc_offset(void);                               /* seconds to add to UTC for a local date: 0 when not read or out of range */
+void local_tm(struct tm *tm);                               /* the console's clock in its time zone (UTC when not read) */
+extern int trend_rc, trend_seq;                             /* the last trend.txt append: its rc; the appends of this session */
 int console_temps(int *cpu, int *rsx);                        /* syscall 383, journal "temps"; the rc */
 int fan_policy_read(int *percent, int *mode);                 /* syscall 409, read-only; journal "fan_policy"; the rc */
 /* A file of 64 x 1 MB written and read back in dir, then deleted; the journal name is jname. */
@@ -70,7 +75,7 @@ int drive_speed_test(drive_state *d);
 int drive_read_error_log(drive_state *d);
 int drive_read_gpl(drive_state *d);
 void drive_close(drive_state *d);
-void drive_report(drive_state *d, const char *when);       /* the drive section of the report + the .bin dumps */
+void drive_report(drive_state *d, const char *when);       /* the drive section of the report + the .bin dumps + the trend line */
 int compat_body(const drive_state *d, char *out, int n);
 int compat_title(const drive_state *d, char *out, int n);
 const char *writes_unit_text(int unit);

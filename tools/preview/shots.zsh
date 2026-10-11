@@ -31,7 +31,9 @@ J=$'done error_log rc=0x00000000 ok=1\ndone gpl_devstat rc=0x00000000 ok=1\ndone
 # the tiles of the home shot: results from the test console (2.0.0; the RSX memory
 # test from 2.0.1), the hours as in the dumps
 ST=$'drive|1|2026-10-08|Dahua V800 2.5 inch SATA 1TB SSD|Health OK, 934 h (38 d)\ncooling|1|2026-10-08|Cell 51>67 C, RSX 55>71 C|fan 33>49%, 2:00 load\npad|1|2026-10-08|Drift L 0.8%, R 0.8%|Circle L 100%, R 100%\ndisplay|1|2026-10-08|1920x1080p 16:9|Visible area 1920 x 1080\ntransfer|1|2026-10-08|USB 3/14 MB/s|net 33, LAN 79 Mbit/s\nmemory|1|2026-10-08|XDR 194 MB: 0 errors|RSX 231 MB: 0 errors\n'
-shot() {   # name script [VAR=value ...]; AREA, JOURNAL, STATE from the caller
+# trend.txt of the trend shot: readings of the test SSD kept by hand, in local time (the open adds one more)
+TS=$'drive Dahua V800 2.5 inch SATA 1TB SSD\n2026-10-06 16:52 918 38 72018 100 0\n2026-10-06 19:45 921 36 72132 100 0\n2026-10-07 19:52 934 36 72607 100 0\n'
+shot() {   # name script [VAR=value ...]; AREA, JOURNAL, STATE, TREND from the caller
     local name=$1 script=$2
     shift 2
     local sbx=$P/build/sbx/shot_$name
@@ -41,11 +43,13 @@ shot() {   # name script [VAR=value ...]; AREA, JOURNAL, STATE from the caller
     [[ -n $AREA ]] && print -r -- "$AREA" > $sbx/dev_hdd0/tmp/ps3_health/safe_area.txt
     [[ -n $JOURNAL ]] && print -rn -- "$JOURNAL" > $sbx/dev_hdd0/tmp/ps3_health/journal.txt
     [[ -n $STATE ]] && print -rn -- "$STATE" > $sbx/dev_hdd0/tmp/ps3_health/state.txt
+    [[ -n $TREND ]] && print -rn -- "$TREND" > $sbx/dev_hdd0/tmp/ps3_health/trend.txt
     env PV_ROOT=$sbx PV_DRIVE=$M PV_OUT=$OUT PV_SCRIPT="$script" "$@" $P/build/pv 2>&1 | grep -v '^snap' || true
 }
 FULL='0 0 1920 1080'
 AREA=$FULL JOURNAL=$J STATE=$ST shot home "3:SNAP=home 4:EXIT"
 AREA=$FULL JOURNAL=$J STATE= shot drive "4:CROSS 12:CROSS 120:SNAP=attributes 122:RIGHT 130:SNAP=summary 132:CIRCLE 140:TRIANGLE 150:SNAP=help 151:EXIT"
+AREA=$FULL JOURNAL=$J STATE= TREND=$TS shot trend "4:CROSS 12:CROSS 120:RIGHT 122:RIGHT 130:SNAP=trend 131:EXIT"
 AREA=$FULL JOURNAL=$J STATE= shot cool "4:RIGHT 6:CROSS 60:CROSS 7400:SNAP=cooling 7401:EXIT" PV_RISE=1
 AREA=$FULL JOURNAL=$J STATE= shot pad "4:RIGHT 6:RIGHT 8:CROSS 20-30:L2+UP+TRIANGLE+START 25:SNAP=controller 26:EXIT" PV_STICKS=3,-2,0,1
 AREA= JOURNAL= STATE= shot calib "3:SNAP=calibration 4:EXIT"

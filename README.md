@@ -6,8 +6,9 @@ A PS3 homebrew app that checks the console's hardware from the TV, with no PC
 and no opening the console. Six modules behind one home screen:
 
 - **Drive:** IDENTIFY and SMART of the internal HDD or SSD, the attribute table
-  with vendor names, a health line, the short and the extended self-test, and a
-  file speed test.
+  with vendor names, a health line, a trend of every full read (power-on hours,
+  temperature, life, host writes, error counts), the short and the extended
+  self-test, and a file speed test.
 - **Cooling:** the Cell and RSX temperatures, the fan duty, and a timed load
   test with a temperature curve.
 - **Controller:** stick rest offset (drift) and circle coverage, every button
@@ -24,7 +25,8 @@ issue with the compatibility report, and a short guide.
 
 The home screen shows the last result of each module from a small state file
 and sends no command to the hardware. Every result goes into one text report on
-the console; SELECT copies it and the freeze journal to a USB stick.
+the console; SELECT copies it, the freeze journal and `trend.txt` to a USB
+stick.
 
 The app draws at **1920 x 1080**, pixel for pixel at 1080p output: the text is
 Inter, rendered at the exact size it is shown, and every screen sits inside
@@ -59,7 +61,7 @@ temperatures, the sticks and the memory size are simulated.
 </tr>
 <tr>
 <td><img src="docs/help.png" alt="Help screen"><br>Help: the QR code that opens a prefilled GitHub issue, and a short guide.</td>
-<td></td>
+<td><img src="docs/trend.png" alt="Drive, trend page"><br>Drive, trend page: the full reads of this drive, newest first, and the change since the first one.</td>
 </tr>
 </table>
 
@@ -119,20 +121,29 @@ the last result and its date (in the console's time zone), and a verdict line
 under them. D-pad chooses, CROSS opens a module, CIRCLE in a module goes back
 home, START exits. TRIANGLE opens Help: the QR code of the compatibility
 report (it opens a prefilled GitHub issue on a phone; nothing is sent until
-you submit it) and a short guide. SELECT copies the report and `journal.txt`
-to the first USB stick found, into `ps3_health/`. The copy is journaled: after
-a freeze inside it, SELECT copies nothing until the journal is cleared. SQUARE
-twice clears the freeze journal (see Safety). The button line at the bottom of
-each screen shows the controller's own symbols.
+you submit it) and a short guide. SELECT copies the report, `journal.txt` and
+`trend.txt` to the first USB stick found, into `ps3_health/`. When the console
+has no `trend.txt` yet (or an empty one), the copy removes the one on the
+stick, so the folder holds no trend of another console. The copy is journaled:
+after a freeze inside it, SELECT copies nothing until the journal is cleared.
+SQUARE twice clears the freeze journal (see Safety). The button line at the
+bottom of each screen shows the controller's own symbols.
 
 ### Drive
 
 1. The first screen offers **CROSS** to read the drive and TRIANGLE for demo
    mode. The app writes each step to the journal before it runs it.
-2. Two pages (LEFT/RIGHT): the attribute table and a summary.
-   - UP/DOWN scroll the table, L1/R1 by a screen.
+2. Three pages (LEFT/RIGHT): the attribute table, a summary and the trend.
+   - UP/DOWN scroll the table and the trend, L1/R1 by a screen.
    - CROSS reads the drive again. Rows whose raw value changed since the
      previous read turn blue.
+   - The trend page lists the full reads of this drive from `trend.txt`,
+     newest first: the local date and time, the power-on hours, the drive
+     temperature, the life left, the host writes and the sum of the error
+     counts. Two rows at its foot hold the first read and the change since
+     then. Each full read adds a line: the read at the open, CROSS, and the
+     read when a self-test ends. A drive with another model starts the file
+     again.
    - TRIANGLE offers a self-test: CROSS for the short one (about 1–2 min),
      TRIANGLE for the extended one (the whole surface; the drive states the
      minutes, often 60 or more). It runs on its own screen: a progress bar, a
@@ -151,7 +162,8 @@ each screen shows the controller's own symbols.
      the file system, the path games use. The PS3's SATA port is 1.5 Gb/s, so
      about 150 MB/s is the most any drive shows here.
 3. Demo mode shows the sectors saved in `demo/` and never touches the drive
-   ("DEMO" in the title). Reports go to `demo-report-*.txt`.
+   ("DEMO" in the title). Reports go to `demo-report-*.txt`. Demo reads add no
+   line to `trend.txt`.
 
 ### Cooling
 
@@ -238,6 +250,14 @@ In `/dev_hdd0/tmp/ps3_health/`:
   it to a public issue.
 - `smart.when` — the time and the model of the last `smart.bin`, for the
   "since last" column. A different model gives no delta.
+- `trend.txt` — one line per full drive read, oldest first, under a first line
+  `drive <model>`: the local date and time, the power-on hours, the drive
+  temperature in C, the raw value of the host-writes attribute, the life left
+  in % and the sum of the error counters, with -1 for a value the drive does
+  not report (`2026-10-07 19:52 934 36 72607 100 0`). Another drive starts the
+  file again. A file that the app cannot read gets no new line: the trend page
+  shows the rc, and a delete over FTP starts the file again. The trend page
+  reads the first read and the last 8 KB.
 - `journal.txt` — the freeze journal (below).
 - `gfx_init.txt` — written only when the app cannot start its picture: the
   number of the renderer's init step that failed (`gfx_be_init` in ps3gfx's
@@ -377,7 +397,8 @@ the shader words. What stays here: `main.c` and `app.h` (the modules behind
 the `module` struct), `home.c` (the home screen and `state.txt`), `help.c`
 (the Help screen with the QR code), `report.c` (the report and the USB copy),
 one `mod_*.c` per module, `ata.c` and `smart.c` (the drive access and the
-decoders), the vendor table, the compatibility text and the QR encoder.
+decoders), `trend.c` (the lines of `trend.txt`), the vendor table, the
+compatibility text and the QR encoder.
 
 ## Build
 
@@ -417,7 +438,8 @@ that the archive is there and that its `COMMIT` equals the pin (`PS3GFX_DEV=1`
 skips the stamp check, for a build against a working clone installed by hand).
 Then `build.sh`:
 1. runs the host unit test (`test/test_smart.c`: the decoders, the vendor table,
-   the summary, the delta, the issue link and a QR encode) on the Mac;
+   the summary, the delta, the trend lines, the issue link and a QR encode) on
+   the Mac;
 2. runs `make pkg`;
 3. runs `python3 -I tools/syscalls.py build/ps3_health.elf`: it lists the LV2
    syscall numbers the ELF makes (each `li r11, N` before an `sc`) and fails
