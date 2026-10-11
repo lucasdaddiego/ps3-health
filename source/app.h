@@ -56,14 +56,15 @@ void mod_cool_report(void);
 
 /* The SPU driver (spu_run.c), the PPU side of ps3gfx's SPU kit: one group of
  * six SPU threads per use, each call journaled. The image names spu_init,
- * spu_import and spu_close are shared; each test has its family of names. */
+ * spu_import and spu_close are shared; each test has its family of names
+ * (Memory's local-store test, Cooling's heat load). */
 typedef struct {
     const char *group, *start, *run, *terminate, *join, *exit_status, *destroy;   /* exit_status NULL: not read */
 } spu_names;
 typedef struct {
-    const char *failed;                  /* the first call that failed or was not made (a journal name, or group_still_up); NULL when none */
+    const char *failed;                  /* the first call that failed or was not made (a journal name, group_still_up or group_not_destroyed); NULL when none */
     s32 rc;                              /* its rc */
-    int skipped, frozen;                 /* that call was not made; it froze this console before */
+    int skipped, frozen, declined;       /* that call was not made; it froze this console before; it was skipped at the prompt */
     int ran, started, late, stuck;       /* the group started; the first reports within 2 s; one did not come; the group could not be stopped */
     int terminated, joined;              /* the terminate was made (term_rc); the join returned (cause, status) */
     s32 term_rc;
@@ -74,9 +75,12 @@ typedef struct {
     char why[64];                        /* why the run did not reach its end, for the screen and the report; empty when it did */
 } spu_result;
 extern const spu_names spu_ls;           /* the Memory module's local-store test: ls_group ... ls_destroy */
-const char *spu_blocked(const spu_names *f);   /* the call that keeps the family from starting (a journal name, or group_still_up), or NULL */
-int spu_ask(void);                       /* the first-run prompt, once: 1 run, 0 skipped, -1 exit */
+extern const spu_names spu_cool;         /* the Cooling module's heat load: cool_group ... cool_destroy, no exit status (heat never ends by itself) */
+const char *spu_blocked(const spu_names *f);   /* the call that keeps the family from starting (a journal name, group_still_up or group_not_destroyed), or NULL */
+int spu_ask(const spu_names *f);         /* the first-run prompt, once (none when f is blocked): 1 run, 0 skipped, -1 exit */
 int spu_up(const spu_names *f, u32 mode, spu_result *r);   /* 1 when six SPUs run; 0: no group is left running (or it is stuck), r says why */
+const volatile spu_kit_rec *spu_reports(void);   /* the six live reports of the group (heat: count moves every SPU_KIT_HEAT_BATCH loops) */
+int spu_stuck(void);                     /* 1 once a group could not be stopped (r->stuck of any test): its SPUs may still run until the app exits */
 int spu_wait_done(s64 us);               /* ls: 1 when the six reports have done = 1 within us */
 void spu_down(spu_result *r);            /* after spu_up returned 1: the end of the group, the reports into r */
 void spu_last_resort(void);              /* leave(): a group still up gets one more journaled terminate */

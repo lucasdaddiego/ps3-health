@@ -5,10 +5,11 @@
 # joined on 2026-10-11: 53 numbers.
 # The app's own calls are named in README.md (Safety, How it reaches the
 # drive): 383 temperatures, 409 fan duty, 600/601/609/616 the drive, and the
-# SPU thread group of the Memory module's local-store test: 169 (initialize),
-# 170, 171, 173, 177, 178 (the group: create, destroy, start, terminate,
-# join), 172 (a thread in the group), 165 (its exit status). The SPU image
-# import and close are SPRX calls into the firmware's liblv2, not syscalls.
+# SPU thread group of the Memory module's local-store test and the Cooling
+# module's load test: 169 (initialize), 170, 171, 173, 177, 178 (the group:
+# create, destroy, start, terminate, join), 172 (a thread in the group), 165
+# (its exit status). The SPU image import and close are SPRX calls into the
+# firmware's liblv2, not syscalls.
 # The rest is PSL1GHT's runtime: threads and time (44, 141, 142, 145, 146),
 # memory (330, 331, 337), the tty (402, 403), the network (700 to 714) and the
 # file system (801 to 834). Never 602, 604 or 870: the script refuses them

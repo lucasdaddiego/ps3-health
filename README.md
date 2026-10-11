@@ -10,7 +10,8 @@ and no opening the console. Six modules behind one home screen:
   temperature, life, host writes, error counts), the short and the extended
   self-test, and a file speed test.
 - **Cooling:** the Cell and RSX temperatures, the fan duty, and a timed load
-  test with a temperature curve.
+  test on the PPU, the six SPUs and the RSX with a temperature curve; the
+  test stops by itself at 75 C.
 - **Controller:** stick rest offset (drift) and circle coverage, every button
   with its pressure, the sixaxis sensors, the rumble motors.
 - **Display:** the video output, the visible area of your TV, full-screen
@@ -170,15 +171,29 @@ bottom of each screen shows the controller's own symbols.
 The Cell and RSX temperatures (syscall 383) and the fan duty (syscall 409,
 `sys_sm_get_fan_policy`, the read half of what webMAN uses; behind a first-run
 prompt; the module stays closed when the app cannot write its journal). CROSS
-runs a 2-minute load test, TRIANGLE a 5-minute one: two PPU
-threads at full load and the RSX drawing 160 full-screen layers per frame,
-the temperatures every 2 s on a curve, then the peak values and the fan
-response. CIRCLE stops the test early and keeps the curve.
+runs a 2-minute load test, TRIANGLE a 5-minute one: two PPU threads at full
+load, the six SPUs on the app's own heat program (multiply-add chains that
+keep the float pipeline busy), and the RSX drawing 160 full-screen layers per
+frame; the temperatures every 2 s on a curve, then the peak values, the fan
+response and the rate of each SPU in millions of loops a second. CIRCLE stops
+the test early and keeps the curve.
+
+The SPUs start and stop behind the counter, every call journaled. Their
+first-run prompt, shared with the Memory module's SPU test, comes at the
+first load test (see Safety). A skip runs the load test without the SPUs, and
+so does a start that fails or that froze the console before: the screen says
+which.
+
+The test stops by itself, with a yellow result that names the reason:
+- when the Cell or the RSX reaches 75 C;
+- after two failed temperature reads in a row;
+- when an SPU stops reporting (its count did not move from one sample to the
+  next, 2 s later).
 
 The verdict compares the peak with the usual range seen on a PS3 with clean
-cooling: under 72 C ok, 72 to 79 C "warm, clean it", 80 C and above "hotter
-than usual". The console protects itself and shuts down near 85 C. The app
-never writes to the fan.
+cooling: under 72 C ok, 72 C and above "warm, clean it". The test stops at
+75 C, so no result is red. The console protects itself and shuts down near
+85 C. The app never writes to the fan.
 
 ### Controller
 
@@ -236,14 +251,15 @@ cores. The app runs its own SPU program (ps3gfx's SPU kit) as one group of
 six SPU threads, and each thread tests about 234 KB of its own 256 KB local
 store: all of it but the program and the top 16 KB, which the stack keeps. A
 pass is March C- on two backgrounds, then a write and a read of each word's
-own address; the test makes 16 passes. It should take well under a second
+own local-store address XOR a constant that changes with the pass; the test
+makes 16 passes. It should take well under a second
 (an estimate from its instruction count: the report has the time the SPUs
 measure). A wrong read is an error, shown with its SPU, its local-store
 address, the word written and the word read. The SPU test cannot be stopped
 with CIRCLE: the app waits up to 5 s for its end, then stops the SPUs
-itself. The first SQUARE asks before the SPUs run (a first-run prompt, see
-Safety). Without a writable app folder there is no journal, and the SPU test
-does not run.
+itself. The first use of the SPUs, here or in the Cooling load test, asks
+before they run (a first-run prompt, see Safety). Without a writable app
+folder there is no journal, and the SPU test does not run.
 
 ### Files on the console
 
@@ -318,20 +334,29 @@ the test console. The app does not call them.) The build checks this:
 `tools/syscalls.py` scans the ELF for every syscall number and fails on 602,
 604 or 870, or on a number outside `tools/syscalls.allow`.
 
-The Memory module's SPU test runs the app's own program on the six SPUs,
-behind a first-run prompt (asked once; a skip is kept until SQUARE twice
-clears the journal). It uses LV2's SPU calls: 169 `sys_spu_initialize` (once
-per start of the app), 170 to 173 (create the SPU thread group, destroy it,
-a thread in it, start it), 177 and 178 (terminate and join the group) and
-165 (a thread's exit status), plus the image import and close, which are
-calls into the firmware's library. Each call is journaled, and so is the
-test while the SPUs run, so a freeze at any step keeps the SPU test off
-until the journal is cleared. The SPUs write only to their own local stores
-and one 128-byte report each in the app's memory. The app ends the group
-itself: the join only after each thread reported its end, else a terminate
-first, so it never waits on a thread that can still run. A group that does
-not stop stays up: the SPU test then stays off until the app exits, and the
-exit makes one more terminate.
+The Memory module's SPU test and the Cooling module's load test run the
+app's own program on the six SPUs, behind one first-run prompt (asked at the
+first use in either module; a skip is kept until SQUARE twice clears the
+journal). They use LV2's SPU calls: 169 `sys_spu_initialize` (once per start
+of the app), 170 to 173 (create the SPU thread group, destroy it, a thread in
+it, start it), 177 and 178 (terminate and join the group) and 165 (a thread's
+exit status, in the Memory test), plus the image import and close, which are
+calls into the firmware's library. Each call is journaled, and so is each
+test while the SPUs run, under the test's own names: a freeze in the Memory
+test keeps that test off, a freeze in the load test keeps the SPUs out of the
+load test (it runs without them), and a freeze in the image calls or in a
+terminate keeps both off, until the journal is cleared. The SPUs write only
+to their own local stores and one 128-byte report each in the app's memory.
+The app ends the group itself: the join only after each thread reported its
+end, else a terminate first (the load test always ends this way), so it
+never waits on a thread that can still run. A group that does not stop stays
+up, and the screen says so in red: the SPUs then stay off in both modules
+until the app exits (no other load test runs on top of them), and the exit
+makes one more terminate. A group that ended but could not be destroyed
+keeps them off too, with that reason. While the SPUs heat the console, the
+load test's own stops (75 C, two failed reads, an SPU that stops reporting)
+are the app's only guard; the console's fan control and its shutdown near
+85 C work as always.
 
 Sending ATA commands to the internal drive from a PS3 app was new ground. While
 we tested, one other method (syscall 604 with LV1 command 0x22) **froze the

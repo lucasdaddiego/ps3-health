@@ -11,7 +11,10 @@ DRIVE=${PV_DRIVE:-$HOME/.local/share/ps3-health/drive}
 [[ -f $DRIVE/identify.bin ]] || print -u2 "no dumps in $DRIVE: the Drive scenarios show the probe screen"
 mkdir -p $OUT
 J_DONE=$'done error_log rc=0x00000000 ok=1\ndone gpl_devstat rc=0x00000000 ok=1\ndone gpl_phy rc=0x00000000 ok=1\ndone fan_policy rc=0x00000000 ok=1\ndone spu_import rc=0x00000000 ok=1\n'
+J_SPU=$'done spu_import rc=0x00000000 ok=1\n'   # the SPU prompt answered: the Cooling scenarios before 2.1.0 ask only for the fan
+J_FAN=$'done fan_policy rc=0x00000000 ok=1\n'    # the fan prompt answered: the SPU prompt comes at the first load test
 MEM='4:DOWN 6:RIGHT 8:RIGHT 10:CROSS'   # home to the Memory module
+COOL='4:RIGHT 6:CROSS'                  # home to the Cooling module
 SBX=$P/build/sbx
 DEF_SAFE='67 38 1853 1042'
 # trend.txt of the test SSD: readings kept by hand, in local time (the preview's clock adds 2026-10-08 09:00)
@@ -51,7 +54,7 @@ demo|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= TREND=$TREND_SEED DEMO=1 scn demo "4:CROSS 12:TRIANGLE 80:SNAP=demo_attr 82:RIGHT 84:RIGHT 92:SNAP=demo_trend 93:EXIT"
     print -rn -- "$TREND_SEED" | cmp -s - $P/build/sbx/demo/dev_hdd0/tmp/ps3_health/trend.txt && print "demo: trend.txt unchanged" || print "demo: trend.txt CHANGED" ;|
 cool|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn cool "4:RIGHT 6:CROSS 14:SNAP=prompt_fan 16:CROSS 60:SNAP=cool_main 62:CROSS 3000:SNAP=cool_load 7400:SNAP=cool_result 7401:EXIT" PV_RISE=1 ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_SPU scn cool "4:RIGHT 6:CROSS 14:SNAP=prompt_fan 16:CROSS 60:SNAP=cool_main 62:CROSS 3000:SNAP=cool_load 7400:SNAP=cool_result 7401:EXIT" PV_RISE=1 ;|
 pad|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn pad "4:RIGHT 6:RIGHT 8:CROSS 20-30:L2+UP+TRIANGLE+START 25:SNAP=pad_live 40-42:SELECT 41:CROSS 100:SNAP=pad_rest 300-302:SELECT 301:TRIANGLE 310-900:SPIN 600:SNAP=pad_circle 1000:SNAP=pad_after 1001:EXIT" PV_STICKS=3,-2,0,1 ;|
 display|all)
@@ -70,7 +73,7 @@ p720|all)
 memstop|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn memstop "4:DOWN 6:RIGHT 8:RIGHT 10:CROSS 20:CROSS 40:CIRCLE 80:SNAP=mem_stopped 82:CIRCLE 90:SNAP=home_memstop 91:EXIT" ;|
 coolstop|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn coolstop "4:RIGHT 6:CROSS 16:CROSS 62:CROSS 300:CIRCLE 320:SNAP=cool_stopped 322:CIRCLE 330:SNAP=home_coolstop 331:EXIT" PV_RISE=1 ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_SPU scn coolstop "4:RIGHT 6:CROSS 16:CROSS 62:CROSS 300:CIRCLE 320:SNAP=cool_stopped 322:CIRCLE 330:SNAP=home_coolstop 331:EXIT" PV_RISE=1 ;|
 demohome|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= DEMO=1 scn demohome "4:CROSS 12:TRIANGLE 80:CIRCLE 90:CROSS 98:TRIANGLE 160:CIRCLE 170:SNAP=home_after_demo 171:EXIT"
     ls $P/build/sbx/demohome/dev_hdd0/tmp/ps3_health | grep report ;|
@@ -79,9 +82,10 @@ nofs|all)
 cool383|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn cool383 "4:RIGHT 6:CROSS 16:CROSS 60:SNAP=cool_383 62:CIRCLE 70:EXIT" PV_383_RC=80010003
     grep -nE "cooling|383" $P/build/sbx/cool383/dev_hdd0/tmp/ps3_health/report-*.txt ;|
-coolclamp|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn coolcold "4:RIGHT 6:CROSS 16:CROSS 62:CROSS 1600:CIRCLE 1620:SNAP=cool_cold 1621:EXIT" PV_TEMP_OFF=-30
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn coolhot "4:RIGHT 6:CROSS 16:CROSS 62:CROSS 1600:CIRCLE 1620:SNAP=cool_hot 1621:EXIT" PV_TEMP_OFF=45 ;|
+coolclamp|all)   # readings under the graph; readings past the stop at the first sample (96 and 100 C): the test ends at 0:00
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_SPU scn coolcold "4:RIGHT 6:CROSS 16:CROSS 62:CROSS 1600:CIRCLE 1620:SNAP=cool_cold 1621:EXIT" PV_TEMP_OFF=-30
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_SPU scn coolhot "4:RIGHT 6:CROSS 16:CROSS 62:CROSS 200:SNAP=cool_hot_first 201:EXIT" PV_TEMP_OFF=45
+    grep -h -A2 "^SPU leg" $SBX/coolhot/dev_hdd0/tmp/ps3_health/report-*.txt ;|
 selfexit|all)
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn selfexit "4:CROSS 12:CROSS 120:TRIANGLE 130:SELECT 140:SNAP=selftest_left 141:EXIT" PV_ST=F3
     ls $P/build/sbx/selfexit/dev_usb000 ;|
@@ -155,6 +159,47 @@ mem_ls_stall|all)   # SPU 3 stops after pass 5: after 5 s the six are terminated
     sed -n '/spu_init/,$s/^/  /p' $SBX/mem_ls_stall/dev_hdd0/tmp/ps3_health/journal.txt ;|
 mem_ls_nofs|all)   # no writable app folder: no journal, so no SPU call and no prompt
     SAFE=$DEF_SAFE STATE= JOURNAL= NOFS=1 scn mem_ls_nofs "$MEM 18:SQUARE 26:SNAP=mem_ls_nofs 27:EXIT" ;|
+mem_ls_badarg|all)   # SPU 2 ends at once with 0x200 (a bad argument): the late path reads the statuses and names it
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn mem_ls_badarg "$MEM 18:SQUARE 1000:SNAP=mem_ls_badarg 1002:CIRCLE 1010:EXIT" PV_SPU_LATE=2,0x200
+    grep -h -A1 "SPU local store" $SBX/mem_ls_badarg/dev_hdd0/tmp/ps3_health/report-*.txt
+    sed -n '/ls_join/,$s/^/  /p' $SBX/mem_ls_badarg/dev_hdd0/tmp/ps3_health/journal.txt ;|
+mem_ls_destroy|all)   # the destroy fails: the next SQUARE names it (no group runs), and makes no call
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn mem_ls_destroy "$MEM 18:SQUARE 1000:SNAP=mem_ls_destroy 1002:SQUARE 1010:SNAP=mem_ls_destroy_again 1012:CIRCLE 1020:EXIT" PV_SPU_FAIL=171
+    grep -h -A1 "SPU local store" $SBX/mem_ls_destroy/dev_hdd0/tmp/ps3_health/report-*.txt | tail -2
+    sed -n '/spu_init/,$s/^/  /p' $SBX/mem_ls_destroy/dev_hdd0/tmp/ps3_health/journal.txt ;|
+cool_spu|all)   # the SPU prompt at the first load test, CROSS: the six SPUs beside the PPU threads and the RSX, 2 minutes
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_FAN scn cool_spu "$COOL 50:CROSS 58:SNAP=cool_spu_prompt 60:CROSS 3060:SNAP=cool_spu_load 7400:SNAP=cool_spu 7402:CIRCLE 7410:SNAP=home_cool_spu 7411:EXIT" PV_RISE=1
+    grep -h -A1 "^SPU leg" $SBX/cool_spu/dev_hdd0/tmp/ps3_health/report-*.txt | tail -2
+    sed -n '/spu_import/,$s/^/  /p' $SBX/cool_spu/dev_hdd0/tmp/ps3_health/journal.txt ;|
+cool_hot|all)   # the RSX passes 75 C near 0:34: the test stops by itself, a yellow result
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_hot "$COOL 50:CROSS 1800:SNAP=cool_hot_load 2400:SNAP=cool_hot 2402:CIRCLE 2410:SNAP=home_cool_hot 2411:EXIT" PV_RISE=1 PV_TEMP_OFF=12
+    grep -h -E "^(load test|SPU leg|stop|verdict)" $SBX/cool_hot/dev_hdd0/tmp/ps3_health/report-*.txt | tail -4 ;|
+cool_stall|all)   # SPU 3 stops counting after 20 s: the test stops at the next sample
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_stall "$COOL 50:CROSS 1800:SNAP=cool_stall 1802:CIRCLE 1810:SNAP=home_cool_stall 1811:EXIT" PV_RISE=1 PV_SPU_STALL=3,20
+    grep -h -E "^(SPU leg|stop|verdict)" $SBX/cool_stall/dev_hdd0/tmp/ps3_health/report-*.txt | tail -3 ;|
+cool_383fail|all)   # 383 fails from 40 s on: two failed reads in a row stop the test
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_383fail "$COOL 50:CROSS 2900:SNAP=cool_383fail 2902:CIRCLE 2910:SNAP=home_cool_383fail 2911:EXIT" PV_RISE=1 PV_383_FAIL_AT=40
+    grep -h -E "^(now|load test|stop|verdict)" $SBX/cool_383fail/dev_hdd0/tmp/ps3_health/report-*.txt | tail -4 ;|
+cool_spu_fail|all)   # the group's start fails: the load test runs without the SPUs
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_spu_fail "$COOL 50:CROSS 600:SNAP=cool_spu_fail_load 602:CIRCLE 620:SNAP=cool_spu_fail 621:EXIT" PV_RISE=1 PV_SPU_FAIL=173
+    grep -h "^SPU leg" $SBX/cool_spu_fail/dev_hdd0/tmp/ps3_health/report-*.txt | tail -1
+    sed -n '/spu_import/,$s/^/  /p' $SBX/cool_spu_fail/dev_hdd0/tmp/ps3_health/journal.txt ;|
+cool_frozen|all)   # cool_run froze before: no SPU call and no job screen, the load test without them; Memory's SPU test still runs
+    SAFE=$DEF_SAFE STATE= JOURNAL="${J_DONE}froze cool_run"$'\n' scn cool_frozen "$COOL 50:CROSS 600:SNAP=cool_frozen_load 602:CIRCLE 620:SNAP=cool_frozen 622:CIRCLE 630:DOWN 632:RIGHT 634:CROSS 650:SQUARE 1600:SNAP=cool_frozen_mem 1602:CIRCLE 1610:EXIT" PV_RISE=1
+    grep -h -E "^SPU (leg|local store)" $SBX/cool_frozen/dev_hdd0/tmp/ps3_health/report-*.txt | tail -2
+    sed -n '/froze/,$s/^/  /p' $SBX/cool_frozen/dev_hdd0/tmp/ps3_health/journal.txt ;|
+cool_skip|all)   # CIRCLE at the SPU prompt: the load test runs without the SPUs, and TRIANGLE asks nothing
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_FAN scn cool_skip "$COOL 50:CROSS 58:CIRCLE 400:SNAP=cool_skip_load 402:CIRCLE 420:TRIANGLE 440:SNAP=cool_skip_again 442:CIRCLE 460:SNAP=cool_skip 461:EXIT" PV_RISE=1
+    grep -h "^SPU leg" $SBX/cool_skip/dev_hdd0/tmp/ps3_health/report-*.txt | tail -1
+    sed 's/^/  /' $SBX/cool_skip/dev_hdd0/tmp/ps3_health/journal.txt ;|
+cool_stuck|all)   # the terminate fails while the SPUs count: they stay up (red line); after SQUARE twice Memory's SQUARE asks nothing and runs nothing
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_stuck "$COOL 50:CROSS 300:CIRCLE 340:SNAP=cool_stuck 342:CIRCLE 350:SQUARE 352:SQUARE 360:DOWN 362:RIGHT 364:CROSS 380:SQUARE 400:SNAP=cool_stuck_mem 402:SQUARE 420:SNAP=cool_stuck_mem_again 422:CIRCLE 430:EXIT" PV_RISE=1 PV_SPU_FAIL=177
+    grep -h -E "^SPU (leg|local store)" $SBX/cool_stuck/dev_hdd0/tmp/ps3_health/report-*.txt | sort -u
+    sed 's/^/  /' $SBX/cool_stuck/dev_hdd0/tmp/ps3_health/journal.txt ;|
+cool_stuck_again|all)   # CROSS again while those SPUs still count: no load on top (the cards dimmed), the red line, the curve and "SPUs stuck" stay
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_stuck_again "$COOL 50:CROSS 300:CIRCLE 342:CROSS 400:SNAP=cool_stuck_again 402:CIRCLE 410:SNAP=home_cool_stuck_again 411:EXIT" PV_RISE=1 PV_SPU_FAIL=177
+    grep -h -E "^(load test|SPU leg|verdict)" $SBX/cool_stuck_again/dev_hdd0/tmp/ps3_health/report-*.txt
+    cut -d'|' -f1,2,5 $SBX/cool_stuck_again/dev_hdd0/tmp/ps3_health/state.txt ;|
 esac
 ${PYTHON:-python3} -I - "$OUT" <<'PY'
 import glob, os, sys

@@ -1,16 +1,18 @@
 /* The SPU driver: the PPU side of ps3gfx's SPU kit (<ps3gfx/spu_kit.h>, the
- * program spu_kit_spu) for the Memory module's local-store test. Each use
- * imports the image, makes one group of six SPU threads, starts it, waits up
- * to 2 s for the six first reports, and ends the group itself: the join once
- * the six threads put their last report, else a terminate first (never a
- * join while a thread can still run), then the destroy and the image close.
- * Every LV2 call is journaled: the image by the shared names spu_init,
- * spu_import and spu_close, the group by the names of its family (spu_ls:
- * ls_*). The run entry (ls_run) opens before the start's done line and
- * closes after the start line of the join or the terminate, so a freeze
- * while the SPUs work is recorded too. A call that froze the console is
- * never made again (SQUARE twice clears the journal). The reports are read
- * with volatile reads: the SPUs write them by DMA. */
+ * program spu_kit_spu) for the Memory module's local-store test (ls) and the
+ * Cooling module's heat load (heat). Each use imports the image, makes one
+ * group of six SPU threads, starts it, waits up to 2 s for the six first
+ * reports, and ends the group itself: the join once the six threads put
+ * their last report, else a terminate first (never a join while a thread can
+ * still run; heat never ends by itself), then the destroy and the image
+ * close. Every LV2 call is journaled: the image by the shared names
+ * spu_init, spu_import and spu_close, the group by the names of its family
+ * (spu_ls: ls_*, spu_cool: cool_*), so a freeze in one test does not close
+ * the other. The run entry (ls_run, cool_run) opens before the start's done
+ * line and closes after the start line of the join or the terminate, so a
+ * freeze while the SPUs work is recorded too. A call that froze the console
+ * is never made again (SQUARE twice clears the journal). The reports are
+ * read with volatile reads: the SPUs write them by DMA. */
 #include <stdio.h>
 #include <string.h>
 #include <sys/spu.h>
@@ -24,12 +26,16 @@
 #define MOVE_US 100000               /* a failed terminate: the counts read twice, this far apart */
 
 const spu_names spu_ls = {"ls_group", "ls_start", "ls_run", "ls_terminate", "ls_join", "ls_exit_status", "ls_destroy"};
+const spu_names spu_cool = {"cool_group", "cool_start", "cool_run", "cool_terminate", "cool_join", NULL, "cool_destroy"};
 
 /* Every family: a start needs the terminate of each, its way out. */
-static const spu_names *const families[] = {&spu_ls};
+static const spu_names *const families[] = {&spu_ls, &spu_cool};
 
-enum { GROUP_NONE, GROUP_RUNNING, GROUP_JOINED };
-static int initialized, imported, grp, run_open;   /* sysSpuInitialize ran in this process; the image; the group; the run entry */
+/* GROUP_IDLE: the group exists and no thread runs (joined, or never
+ * started): the destroy is next. When the destroy fails, the group stays and
+ * holds the SPUs, so no other group can be made in this process. */
+enum { GROUP_NONE, GROUP_RUNNING, GROUP_IDLE };
+static int initialized, imported, grp, run_open, stuck;   /* sysSpuInitialize ran in this process; the image; the group; the run entry; the group could not be stopped */
 static sysSpuImage image;
 static sys_spu_group_t group;
 static sys_spu_thread_t threads[SPU_KIT_SPUS];
@@ -74,24 +80,34 @@ const char *spu_blocked(const spu_names *f)
         if (own[i] && journal_state(own[i]) == J_FROZEN) return own[i];
     for (unsigned i = 0; i < sizeof families / sizeof families[0]; i++)
         if (journal_state(families[i]->terminate) == J_FROZEN) return families[i]->terminate;
-    if (grp != GROUP_NONE) return "group_still_up";
+    if (grp == GROUP_RUNNING) return "group_still_up";
+    if (grp == GROUP_IDLE) return "group_not_destroyed";
     return NULL;
 }
+
+const volatile spu_kit_rec *spu_reports(void) { return recs; }
+
+/* Not group_still_up alone: a failed join after a terminate with rc 0 also
+ * leaves the group up, but its threads were stopped. */
+int spu_stuck(void) { return stuck; }
 
 /* The answer and the skip are kept on spu_import, which every use journals:
  * SQUARE twice empties it, and the prompt comes back once. spu_init runs
  * once per process, so its entry can stay empty after SQUARE twice: it is
  * read only to see a CROSS whose spu_init then froze or failed, before any
- * spu_import line. Then no prompt: spu_blocked or spu_up gives the reason. */
-int spu_ask(void)
+ * spu_import line. Then no prompt: spu_blocked or spu_up gives the reason.
+ * No prompt either when spu_blocked refuses the family: no SPU call would
+ * follow and write spu_import, so the prompt would come back at every use
+ * (a group still up after SQUARE twice). One answer serves both tests. */
+int spu_ask(const spu_names *f)
 {
     int js = journal_state("spu_import");
     if (js != J_NONE) return js != J_SKIPPED;
-    if (journal_state("spu_init") != J_NONE) return 1;
+    if (journal_state("spu_init") != J_NONE || spu_blocked(f)) return 1;
     int r = first_run_prompt("the six SPUs (the SPU thread group)",
-                             "Runs the app's own program on the six SPUs, the Cell's helper cores, as one group of six threads.",
-                             "Each SPU tests its own 256 KB local store and writes only a 128-byte report into the app's memory.",
-                             "Syscalls 169 to 173, 177, 178 and 165, each journaled. A skip keeps the SPU test off.");
+                             "Runs the app's own program on the six SPUs (the Cell's helper cores): each writes only a 128-byte report into the app's memory.",
+                             "Memory: each SPU tests its own 256 KB local store. Cooling: the six SPUs add a heat load to the load test.",
+                             "Syscalls 169 to 173, 177, 178 and 165, each journaled. A skip keeps the SPUs off: the load test runs without them.");
     if (r == 0) journal_skip("spu_import");
     return r;
 }
@@ -185,23 +201,42 @@ static void run_close(void)
     run_open = 0;
 }
 
+/* After a join, for a family that reads them (ls): the six exit statuses,
+ * after a terminate too. A thread that ended by itself before its first
+ * report (0x200: the arguments, 0x300: the mode) is never waited for, so
+ * only this read shows why. A thread the terminate stopped has no status: its
+ * read fails (-1), so after a terminate the done line can have ok=0. That is
+ * a thread's own result, not the run's failure. */
+static void exit_statuses(spu_result *r)
+{
+    if (!gf->exit_status || !jgo(gf->exit_status)) return;
+    s32 first = 0;
+    for (int i = 0; i < SPU_KIT_SPUS; i++) {
+        s32 e = sysSpuThreadGetExitStatus(threads[i], &r->exit_status[i]);
+        if (e) r->exit_status[i] = -1;
+        if (e && !first) first = e;
+    }
+    journal_done(gf->exit_status, first, first == 0);
+}
+
 static void join(spu_result *r)
 {
     u32 cause = 0, status = 0;
     int go = jgo(gf->join);
     run_close();
     if (!go || !jend(gf->join, sysSpuThreadGroupJoin(group, &cause, &status))) return;
-    grp = GROUP_JOINED;
+    grp = GROUP_IDLE;
     r->joined = 1;
     r->cause = cause;
     r->status = status;
+    exit_statuses(r);                                /* before the destroy: the threads go with the group */
 }
 
 /* The terminate, then the join. The terminate's done line has ok=1 for
  * every rc: an error can mean the threads had ended. Then no count moved
  * in 100 ms, and the join follows; a count that moved means a thread still
- * runs: no join, no destroy, the group stays up (stuck) and no other start
- * follows. */
+ * runs: no join, no destroy, the group stays up (stuck), no other start
+ * follows, and spu_stuck() gives 1 until the app exits. */
 static void stop(spu_result *r)
 {
     int go = jgo(gf->terminate);
@@ -212,7 +247,7 @@ static void stop(spu_result *r)
     r->terminated = 1;
     r->term_rc = rc;
     if (rc != 0 && counts_moved()) {
-        r->stuck = 1;
+        r->stuck = stuck = 1;
         return;
     }
     join(r);
@@ -221,7 +256,7 @@ static void stop(spu_result *r)
 /* After the group ended: the destroy, and the image close once no thread can run. */
 static void teardown(void)
 {
-    if (grp == GROUP_JOINED && jgo(gf->destroy) && jend(gf->destroy, sysSpuThreadGroupDestroy(group))) grp = GROUP_NONE;
+    if (grp == GROUP_IDLE && jgo(gf->destroy) && jend(gf->destroy, sysSpuThreadGroupDestroy(group))) grp = GROUP_NONE;
     if (grp != GROUP_RUNNING) image_close();
 }
 
@@ -236,10 +271,14 @@ static int end(spu_result *r)
     }
     r->us = (u64)(sysGetSystemTime() - t0);
     if (r->stuck) snprintf(r->why, sizeof r->why, "the SPUs could not be stopped");
-    else if (r->failed && r->skipped && !strcmp(r->failed, "group_still_up"))
+    else if (r->failed && r->skipped && !strcmp(r->failed, "group_still_up"))   /* not journal names: no journal_state */
         snprintf(r->why, sizeof r->why, "the SPUs of an earlier test are still up");
-    else if (r->failed && r->skipped && journal_state(r->failed) == J_SKIPPED) snprintf(r->why, sizeof r->why, "skipped at the prompt");
-    else if (r->failed && r->skipped) {
+    else if (r->failed && r->skipped && !strcmp(r->failed, "group_not_destroyed"))
+        snprintf(r->why, sizeof r->why, "the SPU group of an earlier test could not be destroyed");
+    else if (r->failed && r->skipped && journal_state(r->failed) == J_SKIPPED) {
+        r->declined = 1;
+        snprintf(r->why, sizeof r->why, "skipped at the prompt");
+    } else if (r->failed && r->skipped) {
         r->frozen = 1;
         snprintf(r->why, sizeof r->why, "%s froze this console before", r->failed);
     } else if (r->failed) snprintf(r->why, sizeof r->why, "%s failed: rc 0x%08x", r->failed, (unsigned)r->rc);
@@ -272,7 +311,7 @@ int spu_up(const spu_names *f, u32 mode, spu_result *r)
         return end(r);
     }
     if (!jgo(f->start) || !jend(f->start, group_start())) {
-        if (jgo(f->destroy)) jend(f->destroy, sysSpuThreadGroupDestroy(group));
+        if (!jgo(f->destroy) || !jend(f->destroy, sysSpuThreadGroupDestroy(group))) grp = GROUP_IDLE;   /* the group stays */
         image_close();
         return end(r);
     }
@@ -284,6 +323,9 @@ int spu_up(const spu_names *f, u32 mode, spu_result *r)
     if (r->late) snprintf(r->why, sizeof r->why, "SPU %d did not report in %d s", missing, FIRST_US / 1000000);
     if (r->late || !run_open) {                      /* stop() ends the run entry */
         stop(r);
+        s32 st = r->late ? r->exit_status[missing] : -1;   /* read after the join (ls): it ended at once */
+        if (st == SPU_KIT_EXIT_ARGS || st == SPU_KIT_EXIT_MODE)
+            snprintf(r->why, sizeof r->why, "SPU %d ended with status 0x%x before its first report", missing, (unsigned)st);
         teardown();
         return end(r);
     }
@@ -310,18 +352,8 @@ void spu_down(spu_result *r)
 {
     R = r;
     if (grp == GROUP_RUNNING) {                      /* join() or stop() ends the run entry */
-        if (done_count() == SPU_KIT_SPUS) {       /* each thread put its last report and ends: the join returns */
-            join(r);
-            if (r->joined && gf->exit_status && jgo(gf->exit_status)) {
-                s32 first = 0;
-                for (int i = 0; i < SPU_KIT_SPUS; i++) {
-                    s32 e = sysSpuThreadGetExitStatus(threads[i], &r->exit_status[i]);
-                    if (e) r->exit_status[i] = -1;
-                    if (e && !first) first = e;
-                }
-                journal_done(gf->exit_status, first, first == 0);   /* a thread's own result, not the run's failure */
-            }
-        } else stop(r);
+        if (done_count() == SPU_KIT_SPUS) join(r);   /* each thread put its last report and ends: the join returns */
+        else stop(r);
         teardown();
     }
     end(r);

@@ -170,9 +170,9 @@ static void job_ls(void)
 
 /* An SPU passes when its last report has done = 1, its exit status is
  * 0x500 | index and it read no wrong word, over the same area as the others.
- * The done flags of all six come first: after the stop at 5 s the driver
- * reads no exit status, so a status check first names SPU 0, not the late
- * SPU. */
+ * The done flags of all six come first: after the stop at 5 s the late SPU
+ * has no exit status (its read fails, -1), so a status check first would
+ * give "the exit status ... was not read", not the late SPU's pass count. */
 static void ls_judge(void)
 {
     const spu_result *r = &ls.r;
@@ -210,7 +210,7 @@ static void ls_judge(void)
  * job screen: spu_up makes no call then, it only fills the reason. */
 static int ls_open(void)
 {
-    if (fs_ok && spu_ask() < 0) return -1;   /* the last result stays for the tile and the report */
+    if (fs_ok && spu_ask(&spu_ls) < 0) return -1;   /* the last result stays for the tile and the report */
     memset(&ls, 0, sizeof ls);
     if (!fs_ok) {
         ls.state = LS_NOTRUN;

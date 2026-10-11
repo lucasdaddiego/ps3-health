@@ -1,10 +1,13 @@
 /* PS3 Health's part of the preview: the drive from a console's dumps, 383 and
- * 409 (PV_DRIVE, PV_ST, PV_RISE, PV_TEMP_OFF, PV_383_RC), and the six SPUs of
- * the SPU kit (PV_SPU_FAIL, PV_SPU_LATE, PV_SPU_STALL, PV_LS_FAULT): README.md. */
+ * 409 (PV_DRIVE, PV_ST, PV_RISE, PV_TEMP_OFF, PV_383_RC, PV_383_FAIL_AT), and
+ * the six SPUs of the SPU kit (PV_SPU_FAIL, PV_SPU_LATE, PV_SPU_STALL,
+ * PV_LS_FAULT, PV_HEAT_RATE): README.md. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <pthread.h>
+#include <sched.h>
 #include "lv2/systime.h"
 #include "ppu-lv2.h"
 #include "sys/spu.h"
@@ -65,7 +68,8 @@ static u64 ata(ata_block *b, u8 *out)
 
 /* The kit's program: on the console the archive's member, here no bytes. The
  * image calls are SPRX imports on the console (the firmware's liblv2), not
- * syscalls. */
+ * syscalls. The threads: ls runs to its end at the start, heat counts in a
+ * host thread on the preview's clock until the terminate. */
 const uint8_t spu_kit_spu[1];
 const uint32_t spu_kit_spu_size = 0;
 
@@ -89,29 +93,72 @@ s32 sysSpuImageClose(sysSpuImage *image)
 #define LS_HI (SPU_KIT_LS_TOP - SPU_KIT_LS_STACK)
 #define LS_FAULT_WORD 0x4000u        /* PV_LS_FAULT: the word at lo + 0x10000 */
 #define LS_TICKS 7980000u            /* a model, 0.1 s of the 79.8 MHz timebase: the host's time is not an SPU's */
+#define ESTAT 0x8001000fu            /* LV2's CELL_ESTAT: a thread that did not end by itself has no exit status */
 
 static struct {
     u32 num, cause, status;
     sysSpuThreadArgument arg[SPU_KIT_SPUS];
     s32 exit_status[SPU_KIT_SPUS];
+    int exited[SPU_KIT_SPUS];                    /* the thread ended by itself, with exit_status */
 } G;
 static uint32_t ls_area[(LS_HI - LS_LO) / 4];   /* the area of one SPU: the threads run one after the other */
+static pthread_t counter;                        /* heat: the counts, until the terminate */
+static int counting;
+static volatile int count_stop;
 
 static int env_int(const char *name, int dflt) { return getenv(name) ? atoi(getenv(name)) : dflt; }
 
-/* One thread from its start to its end, as the kit's program runs it: the
- * checks of the mark and arg0, the start report, the 16 passes of ls with a
- * report after each, the ticks and done = 1, the exit status. A report is
- * the thread's whole 128 bytes, as its DMA. */
+static void thread_exit(u32 k, s32 status)
+{
+    G.exit_status[k] = status;
+    G.exited[k] = 1;
+}
+
+/* heat: every report counts on the preview's clock, PV_HEAT_RATE loops per
+ * microsecond (default 355, the design's estimate for the console), a report
+ * every SPU_KIT_HEAT_BATCH loops. PV_SPU_STALL=i,n: SPU i reports no more
+ * after n s. PV_SPU_LATE's SPU never counts. */
+static void *heat_count(void *unused)
+{
+    (void)unused;
+    u64 rate = (u64)env_int("PV_HEAT_RATE", 355), t0 = sysGetSystemTime();
+    int stall = -1, stall_s = 0, late = -1;
+    if (getenv("PV_SPU_STALL")) sscanf(getenv("PV_SPU_STALL"), "%d,%d", &stall, &stall_s);
+    if (getenv("PV_SPU_LATE")) sscanf(getenv("PV_SPU_LATE"), "%d", &late);
+    while (!count_stop) {
+        u64 dt = sysGetSystemTime() - t0;
+        for (u32 k = 0; k < G.num && k < SPU_KIT_SPUS; k++) {
+            if ((int)k == late) continue;
+            u64 t = (int)k == stall && dt > (u64)stall_s * 1000000 ? (u64)stall_s * 1000000 : dt;
+            spu_kit_rec *r = (spu_kit_rec *)(uintptr_t)G.arg[k].arg0;
+            __atomic_store_n(&r->count, t * rate / SPU_KIT_HEAT_BATCH * SPU_KIT_HEAT_BATCH, __ATOMIC_RELAXED);
+        }
+        sched_yield();
+    }
+    return NULL;
+}
+
+/* One thread from its start, as the kit's program runs it: the checks of the
+ * mark and arg0, the start report; then ls to its end (the 16 passes with a
+ * report after each, the ticks and done = 1, the exit status), while heat
+ * goes on in heat_count. A report is the thread's whole 128 bytes, as its
+ * DMA. PV_SPU_LATE=i: SPU i never reports and never ends (the late path);
+ * PV_SPU_LATE=i,0x200: it ends at once with that status, before its first
+ * report, as after a bad argument (0x300: a bad mode). */
 static void spu_thread(u32 k)
 {
     const sysSpuThreadArgument *a = &G.arg[k];
     spu_kit_rec *out = (spu_kit_rec *)(uintptr_t)a->arg0;
     spu_kit_rec rec;
     u32 mode = (u32)(a->arg2 >> 32), index = (u32)a->arg2 & 0xffff;
-    if (((u32)a->arg2 >> 16) != SPU_KIT_MARK || !a->arg0 || (a->arg0 & 127)) { G.exit_status[k] = SPU_KIT_EXIT_ARGS; return; }
-    if (mode != SPU_KIT_LS) { G.exit_status[k] = SPU_KIT_EXIT_MODE; return; }
-    if (env_int("PV_SPU_LATE", -1) == (int)index) return;   /* no report and no end: the late path */
+    int late = -1, late_status = 0;
+    if (((u32)a->arg2 >> 16) != SPU_KIT_MARK || !a->arg0 || (a->arg0 & 127)) { thread_exit(k, SPU_KIT_EXIT_ARGS); return; }
+    if (mode != SPU_KIT_LS && mode != SPU_KIT_HEAT) { thread_exit(k, SPU_KIT_EXIT_MODE); return; }
+    if (getenv("PV_SPU_LATE")) sscanf(getenv("PV_SPU_LATE"), "%d,%i", &late, &late_status);
+    if (late == (int)index) {                        /* no report: the late path */
+        if (late_status) thread_exit(k, late_status);
+        return;
+    }
     memset(&rec, 0, sizeof rec);
     rec.magic = SPU_KIT_MAGIC;
     rec.index = index;
@@ -120,6 +167,7 @@ static void spu_thread(u32 k)
     rec.arg1 = a->arg1;
     rec.arg2 = a->arg2;
     *out = rec;
+    if (mode == SPU_KIT_HEAT) return;                /* it counts in heat_count until the terminate */
     rec.lo = LS_LO;
     rec.hi = LS_HI;
     ls_fault = env_int("PV_LS_FAULT", -1) == (int)index ? &ls_area[LS_FAULT_WORD] : NULL;
@@ -135,11 +183,14 @@ static void spu_thread(u32 k)
     rec.ticks = LS_TICKS;
     rec.done = 1;
     *out = rec;
-    G.exit_status[k] = (s32)(SPU_KIT_EXIT_LS | index);
+    thread_exit(k, (s32)(SPU_KIT_EXIT_LS | index));
 }
 
-/* One emulated group. The start runs each thread to its end at once, in the
- * caller's thread, so the reports are all there when it returns. */
+/* One emulated group. The start runs each thread's start at once, in the
+ * caller's thread: ls to its end, so the reports are all there when it
+ * returns; heat then counts in a host thread. A refused call (PV_SPU_FAIL)
+ * changes nothing: a refused terminate leaves heat counting (the stuck
+ * path). */
 static u64 spu_call(int n, u64 a, u64 b, u64 c, u64 f)
 {
     if (env_int("PV_SPU_FAIL", 0) == n) return 0x80010002;   /* a refused call, for the error paths */
@@ -158,9 +209,17 @@ static u64 spu_call(int n, u64 a, u64 b, u64 c, u64 f)
         return 0;
     case 173:                                        /* start */
         for (u32 k = 0; k < G.num && k < SPU_KIT_SPUS; k++) spu_thread(k);
-        G.cause = SPU_THREAD_GROUP_JOIN_ALL_THREADS_EXIT;
+        if ((u32)(G.arg[0].arg2 >> 32) == SPU_KIT_HEAT) {   /* heat never ends by itself */
+            count_stop = 0;
+            counting = pthread_create(&counter, NULL, heat_count, NULL) == 0;
+        } else G.cause = SPU_THREAD_GROUP_JOIN_ALL_THREADS_EXIT;
         return 0;
     case 177:                                        /* terminate */
+        if (counting) {
+            count_stop = 1;
+            pthread_join(counter, NULL);
+            counting = 0;
+        }
         G.cause = SPU_THREAD_GROUP_JOIN_TERMINATED;
         G.status = (u32)b;
         return 0;
@@ -168,8 +227,9 @@ static u64 spu_call(int n, u64 a, u64 b, u64 c, u64 f)
         *(u32 *)(uintptr_t)b = G.cause;
         *(u32 *)(uintptr_t)c = G.status;
         return 0;
-    case 165:                                        /* a thread's exit status */
+    case 165:                                        /* a thread's exit status: only after its own end */
         if (a < THREAD || a >= THREAD + SPU_KIT_SPUS) return 0x80010002;
+        if (!G.exited[a - THREAD]) return ESTAT;
         *(s32 *)(uintptr_t)b = G.exit_status[a - THREAD];
         return 0;
     case 171:                                        /* group destroy */
@@ -197,6 +257,7 @@ u64 pv_syscall(int n, u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g)
     case 383: {
         if (getenv("PV_383_RC")) return (s32)strtoul(getenv("PV_383_RC"), NULL, 16);   /* a refused call */
         double t = (sysGetSystemTime() - 1000000) / 1e6;
+        if (getenv("PV_383_FAIL_AT") && t >= atof(getenv("PV_383_FAIL_AT"))) return 0x80010003;   /* refused from second s on */
         int rise = getenv("PV_RISE") ? (int)(20 * (1 - exp(-t / 70))) : 0;
         int off = getenv("PV_TEMP_OFF") ? atoi(getenv("PV_TEMP_OFF")) : 0;            /* readings off the 30..90 C graph */
         *(u32 *)(uintptr_t)b = (u32)((a ? 55 + rise : 51 + rise) + off) << 24;

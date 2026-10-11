@@ -37,11 +37,16 @@ offline. `pv_app.c` defines the strong `pv_syscall`: the drive (syscalls 600,
 177, 178, and the image import and close). `stub/sys/spu.h` and
 `stub/lv2/spu.h` stand in for PSL1GHT's headers (`build.zsh` adds `stub/` to
 the include path), so the driver's calls reach `pv_syscall`. One emulated
-group: the start runs each thread at once, in the caller's thread, with the
-kit's local-store kernel over a host buffer of the area's size, and fills the
-reports as the SPU program does (lo 0x1980, the kit's at the pinned commit;
-the ticks a model of 0.1 s). The join gives cause 2, or cause 4 and the value
-after a terminate.
+group: the start runs each thread's start at once, in the caller's thread.
+The local-store mode runs to its end there, with the kit's kernel over a host
+buffer of the area's size, and fills the reports as the SPU program does (lo
+0x1980, the kit's at the pinned commit; the ticks a model of 0.1 s). The heat
+mode puts its start report, then a host thread counts every report on the
+preview's clock until the terminate. The join gives cause 2, or cause 4 and
+the value after a terminate. A thread's exit status (165) answers only for a
+thread that ended by itself, else LV2's ESTAT (0x8001000f); a thread that
+ended before a terminate keeps its status here, which no console round has
+checked yet.
 
 ## Drive dumps
 
@@ -69,7 +74,10 @@ adds:
 | `PV_RISE=1` | temperatures that rise under load |
 | `PV_TEMP_OFF=n` | add n degrees to every reading |
 | `PV_383_RC=80010003` | syscall 383 refused with this rc |
-| `PV_SPU_FAIL=n` | SPU syscall n (165 to 178) fails with 0x80010002 |
+| `PV_383_FAIL_AT=s` | syscall 383 refused (0x80010003) from second s of the preview's clock on |
+| `PV_SPU_FAIL=n` | SPU syscall n (165 to 178) fails with 0x80010002 (177 while heat counts: the SPUs that could not be stopped) |
 | `PV_SPU_LATE=i` | SPU i never reports: the driver's late path (the terminate, the join) |
-| `PV_SPU_STALL=i,n` | SPU i stops after pass n, without its last report: the driver's stop at 5 s |
+| `PV_SPU_LATE=i,0x200` | SPU i ends at once with that status, before its first report (0x200 a bad argument, 0x300 a bad mode) |
+| `PV_SPU_STALL=i,n` | local store: SPU i stops after pass n, without its last report (the driver's stop at 5 s); heat: SPU i stops counting after n s (the load test's stop) |
+| `PV_HEAT_RATE=n` | heat: loops per microsecond per SPU (default 355, the design's estimate) |
 | `PV_LS_FAULT=i` | one bit stuck at 1 in one word of SPU i's local store |
