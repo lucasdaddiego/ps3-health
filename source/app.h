@@ -31,6 +31,8 @@ typedef struct {
 void state_load(void);
 void state_set(const char *key, int dot, const char *l1, const char *l2);
 
+void boot_mark(const char *name);  /* one line in APP_DIR/boot.txt (boot.c); "main" begins a start */
+
 extern int fs_ok;                  /* APP_DIR is writable: the journal works */
 extern int fs_mk, fs_op, fs_wr;    /* the file test return codes, for the home screen when fs_ok is 0 */
 
@@ -51,6 +53,7 @@ int mod_mem_open(void);
 void mod_mem_report(void);
 int mod_net_open(void);
 void mod_net_report(void);
+void net_end(void);                /* leave(): the network's end, one journaled call; nothing when it never started */
 int mod_cool_open(void);
 void mod_cool_report(void);
 

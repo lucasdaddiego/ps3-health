@@ -10,6 +10,7 @@
 #include <sys/file.h>
 #include <lv2/systime.h>
 #include <sys/systime.h>
+#include <sys/thread.h>
 #include <net/net.h>
 #include <net/netctl.h>
 #include <sysmodule/sysmodule.h>
@@ -29,6 +30,7 @@ static struct { int done, rc; double mb, wsec, rsec; char dir[32]; } usb;
 static struct { int done, rc, http, port; double bytes, sec; char host[96], path[160], note[96]; } dl;
 static struct { int done, rc; double bytes, sec; char note[96]; } lan;
 static int net_up, net_frozen;               /* net_frozen: the network start froze this console before */
+static int net_lib, net_mod, net_ctl;        /* 1 where netInitialize, the netctl module load, netCtlInit succeeded: net_end undoes only these */
 static char my_ip[32];
 static char lan_msg[160];
 
@@ -46,21 +48,80 @@ static void net_addr(void)
  * libnetctl needs the module that the start loads. The first read is inside
  * the entry because the first open runs all of it behind the job screen,
  * which promises that skip. The flag follows the journal on each call, so
- * SQUARE twice brings the start back in the same session. */
+ * SQUARE twice brings the start back in the same session. A failed
+ * netInitialize runs again at the next call; the module load and netCtlInit
+ * run until each succeeded once. */
 static void net_init(void)
 {
     if (!net_up) {
         net_frozen = !journal_start("net_start");   /* 0 for a frozen or skipped entry */
         if (net_frozen) { snprintf(my_ip, sizeof my_ip, "not started"); return; }
         s32 rc = netInitialize();
-        if (rc == 0) net_up = 1;
-        sysModuleLoad(SYSMODULE_NETCTL);     /* libnetctl does not load its module itself */
-        netCtlInit();
+        if (rc == 0) net_up = net_lib = 1;
+        if (!net_mod && sysModuleLoad(SYSMODULE_NETCTL) == 0) net_mod = 1;   /* libnetctl does not load its module itself */
+        if (!net_ctl && netCtlInit() == 0) net_ctl = 1;
         net_addr();
         journal_done("net_start", rc, rc == 0);
         return;
     }
     net_addr();                              /* a later read: no screen promises a skip for it */
+}
+
+/* The network's end, from leave(): no job thread runs then, so no socket
+ * call is in flight, and every job closed its sockets. PSL1GHT's sample
+ * order (httptest's http_end): the libraries end in the reverse order of
+ * their start, then the modules unload. So netCtlTerm, netDeinitialize
+ * (netFinalizeNetwork, its 128 KB pool, the net module), the netctl module;
+ * each only where its start succeeded. The flags clear first, so a second
+ * call does nothing. One journaled call, net_end: a freeze inside it is
+ * skipped at every later exit. None of these calls has a timeout of its
+ * own, so they run in a thread and leave() waits 300 sleeps of 10 ms (about
+ * 3 s) at most. A call still inside then gets no done line: the next start
+ * records "froze net_end" and later exits skip it, and the process exit
+ * ends the thread. No thread: no calls, and a done line with the rc of
+ * the thread create (the app ended without these calls before). No
+ * writable app folder: no journal, so no calls either (a freeze would go
+ * unrecorded and run again at every exit); the process exit ends the
+ * network, as before. */
+#define NET_END_WAITS 300
+static volatile int end_done;
+static int end_lib, end_mod, end_ctl;
+static s32 end_rc;
+
+static void end_thread(void *arg)
+{
+    (void)arg;
+    if (end_ctl) netCtlTerm();
+    s32 rc = end_lib ? netDeinitialize() : 0;
+    if (end_mod) {
+        s32 u = sysModuleUnload(SYSMODULE_NETCTL);
+        if (rc == 0) rc = u;
+    }
+    end_rc = rc;
+    __sync_synchronize();
+    end_done = 1;
+    sysThreadExit(0);
+}
+
+void net_end(void)
+{
+    sys_ppu_thread_t t;
+    u64 ret;
+    if (!net_lib && !net_mod && !net_ctl) return;   /* never started, or ended already */
+    end_lib = net_lib, end_mod = net_mod, end_ctl = net_ctl;
+    net_lib = net_mod = net_ctl = net_up = 0;
+    if (!fs_ok) return;                              /* no journal, no call */
+    if (!journal_start("net_end")) return;           /* 0: it froze this console at an exit before */
+    end_done = 0;
+    s32 rc = sysThreadCreate(&t, end_thread, NULL, 1500, 0x20000, THREAD_JOINABLE, "net_end");
+    if (rc != 0) { journal_done("net_end", rc, 0); return; }
+    for (int i = 0; i < NET_END_WAITS; i++) {   /* the sleep first: the li r11 stays before its sc for tools/syscalls.py */
+        sysUsleep(10000);
+        if (end_done) break;
+    }
+    if (!end_done) return;
+    sysThreadJoin(t, &ret);
+    journal_done("net_end", end_rc, end_rc == 0);
 }
 
 /* ---- USB ------------------------------------------------------------------ */

@@ -48,6 +48,14 @@ thread that ended by itself, else LV2's ESTAT (0x8001000f); a thread that
 ended before a terminate keeps its status here, which no console round has
 checked yet.
 
+The library's stubs have `sysModuleLoad` and no `sysModuleUnload`, which
+`net_end` calls: `stub/pv_health.h` declares it and `build.zsh` force-includes
+it (`-include`; a `stub/sysmodule/sysmodule.h` here would come after the
+library's on the include path), and `pv_app.c` defines it. The boot marks
+need one more: `sysLv2FsRename`, for the move to `boot.old.txt` at the cap,
+declared and defined the same way. It refuses an existing target, as lv2
+does. `boot.txt` goes to the sandbox like every other file.
+
 ## Drive dumps
 
 The emulated drive reads `identify.bin`, `smart.bin`, `thresh.bin`,

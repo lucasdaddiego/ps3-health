@@ -8,6 +8,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <sched.h>
+#include <sys/stat.h>
 #include "lv2/systime.h"
 #include "ppu-lv2.h"
 #include "sys/spu.h"
@@ -271,4 +272,32 @@ u64 pv_syscall(int n, u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g)
         return 0;
     }
     return 0x80010003;
+}
+
+/* ---- the netctl module ---------------------------------------------------- */
+
+/* net_end's unload: the library's stubs have sysModuleLoad and no unload
+ * (stub/pv_health.h declares it). Nothing to unload here. */
+s32 sysModuleUnload(u32 id)
+{
+    (void)id;
+    return 0;
+}
+
+/* ---- boot.txt at the cap ------------------------------------------------- */
+
+/* boot_mark's rename: the library's stubs have no sysLv2FsRename
+ * (stub/pv_health.h declares it). The paths go to the sandbox as stubs.c maps
+ * them ($PV_ROOT, else /tmp/pv). An existing target is refused, as lv2 does
+ * (webMAN unlinks the target before each cellFsRename): a boot.c that stops
+ * removing boot.old.txt first empties boot.txt here, as on the console. */
+s32 sysLv2FsRename(const char *from, const char *to)
+{
+    char a[1024], b[1024];
+    struct stat st;
+    const char *root = getenv("PV_ROOT") ? getenv("PV_ROOT") : "/tmp/pv";
+    snprintf(a, sizeof a, "%s%s", root, from);
+    snprintf(b, sizeof b, "%s%s", root, to);
+    if (stat(b, &st) == 0) return (s32)0x80010014;                   /* EEXIST */
+    return rename(a, b) ? (s32)0x80010006 : 0;
 }

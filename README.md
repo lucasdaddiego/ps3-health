@@ -235,7 +235,10 @@ The first open starts the network behind the counter, as one journaled call.
 Without a writable app folder there is no journal, so no skip can follow a
 freeze, and the start runs with no counter. If the start froze the console,
 the app never runs it again: the title line says so, and the internet and LAN
-tests fail with that reason.
+tests fail with that reason. The exit ends the network (`netCtlTerm`,
+`netDeinitialize`, the netctl module) as one journaled call and waits for it
+about 3 s at most; if it froze the console, later exits skip it. Without a
+writable app folder the exit makes no network call.
 
 ### Memory
 
@@ -290,6 +293,9 @@ In `/dev_hdd0/tmp/ps3_health/`:
   shows the rc, and a delete over FTP starts the file again. The trend page
   reads the first read and the last 8 KB.
 - `journal.txt` — the freeze journal (below).
+- `boot.txt` — the boot log: it records the last start step reached, so a
+  start that stops can be found. Over 32 KB, the next start moves it to
+  `boot.old.txt` and begins a new one.
 - `gfx_init.txt` — written only when the app cannot start its picture: the
   number of the renderer's init step that failed (`gfx_be_init` in ps3gfx's
   `source/gfx/gfx_rsx.c`). The app then goes back to the XMB.
@@ -328,12 +334,12 @@ The other system calls, all read-only and journaled like the drive calls:
 409 `sys_sm_get_fan_policy` (the fan duty). The speed and USB tests use the
 normal file calls, the Transfer module the normal socket calls, the Memory
 module's XDR and RSX tests their own allocations, the Display module the
-video state read. The network start (the first open of Transfer) and the
-copy to a USB stick (SELECT) are journaled too. (Raw sector reads, syscall
-602, and the console id, syscall 870, are refused on HEN: ENXIO and EPERM on
-the test console. The app does not call them.) The build checks this:
-`tools/syscalls.py` scans the ELF for every syscall number and fails on 602,
-604 or 870, or on a number outside `tools/syscalls.allow`.
+video state read. The network start (the first open of Transfer), its end at
+the exit and the copy to a USB stick (SELECT) are journaled too. (Raw sector
+reads, syscall 602, and the console id, syscall 870, are refused on HEN: ENXIO
+and EPERM on the test console. The app does not call them.) The build checks
+this: `tools/syscalls.py` scans the ELF for every syscall number and fails on
+602, 604 or 870, or on a number outside `tools/syscalls.allow`.
 
 The Memory module's SPU test and the Cooling module's load test run the
 app's own program on the six SPUs, behind one first-run prompt (asked at the
@@ -455,8 +461,9 @@ the `module` struct), `home.c` (the home screen and `state.txt`), `help.c`
 (the Help screen with the QR code), `report.c` (the report and the USB copy),
 one `mod_*.c` per module, `ata.c` and `smart.c` (the drive access and the
 decoders), `trend.c` (the lines of `trend.txt`), `spu_run.c` (the SPU
-driver: the journaled group of six SPU threads of the SPU kit), the vendor
-table, the compatibility text and the QR encoder.
+driver: the journaled group of six SPU threads of the SPU kit), `boot.c`
+(the marks of `boot.txt`), the vendor table, the compatibility text and the
+QR encoder.
 
 ## Build
 
