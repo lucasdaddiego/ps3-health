@@ -60,7 +60,7 @@ does. `boot.txt` goes to the sandbox like every other file.
 
 The emulated drive reads `identify.bin`, `smart.bin`, `thresh.bin`,
 `selftest.bin`, `errlog.bin`, `devstat.bin`, `phy.bin` and `devinfo.bin` from
-`$PV_DRIVE`, by default `~/.local/share/ps3-health/drive/`. Copy them from the
+`$PV_DRIVE`, by default `~/.local/share/ps3/drive/`. Copy them from the
 console's app folder (`/dev_hdd0/tmp/ps3_health/`, FTP). Without them the Drive
 scenarios show the probe screen.
 

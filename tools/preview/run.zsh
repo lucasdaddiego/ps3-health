@@ -2,11 +2,11 @@
 # Preview scenarios: each runs the app in a fresh sandbox with a pad script.
 #   zsh tools/preview/run.zsh [scenario]     (default: all; names in the case below)
 # Snapshots go to build/out/*.png. The drive answers from the dumps in
-# $PV_DRIVE (default ~/.local/share/ps3-health/drive); without them the Drive
+# $PV_DRIVE (default ~/.local/share/ps3/drive); without them the Drive
 # scenarios show the probe screen.
 P=${0:A:h}
 OUT=$P/build/out
-DRIVE=${PV_DRIVE:-$HOME/.local/share/ps3-health/drive}
+DRIVE=${PV_DRIVE:-$HOME/.local/share/ps3/drive}
 [[ -x $P/build/pv ]] || { print -u2 "run build.zsh first"; exit 1 }
 [[ -f $DRIVE/identify.bin ]] || print -u2 "no dumps in $DRIVE: the Drive scenarios show the probe screen"
 mkdir -p $OUT

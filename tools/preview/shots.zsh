@@ -1,14 +1,14 @@
 #!/bin/zsh
 # The README screenshots: renders at 1920x1080, saved as 1280x720 PNG in docs/.
 #   zsh tools/preview/shots.zsh
-# The drive data comes from $PV_DRIVE (default ~/.local/share/ps3-health/drive)
+# The drive data comes from $PV_DRIVE (default ~/.local/share/ps3/drive)
 # through a masked copy in build/: identify.bin gets 15 x "X" as its serial, no
 # WWN, zeros in the reserved words 236-254 (a vendor string on the test SSD)
 # and a new checksum. The dumps themselves never go into the repo.
 set -e
 P=${0:A:h}
 R=${P:h:h}
-DRIVE=${PV_DRIVE:-$HOME/.local/share/ps3-health/drive}
+DRIVE=${PV_DRIVE:-$HOME/.local/share/ps3/drive}
 [[ -x $P/build/pv ]] || { print -u2 "run build.zsh first"; exit 1 }
 [[ -f $DRIVE/identify.bin ]] || { print -u2 "no dumps in $DRIVE (see README.md)"; exit 1 }
 M=$P/build/drive_masked OUT=$P/build/shots
