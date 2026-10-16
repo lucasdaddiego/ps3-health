@@ -1,6 +1,7 @@
 /* Mac-side test of the pure C layer (smart.c, vendor.c, trend.c, compat.c,
- * qrcodegen.c) with synthetic sectors laid out as ACS-3 says. build.sh and CI
- * run it. */
+ * qrcodegen.c, heat.c, ping.c, tone.c) with synthetic sectors laid out as
+ * ACS-3 says. build.sh and CI run it. */
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -10,6 +11,9 @@
 #include "../source/compat.h"
 #include "../source/version.h"
 #include "../source/qrcodegen.h"
+#include "../source/heat.h"
+#include "../source/ping.h"
+#include "../source/tone.h"
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -362,6 +366,183 @@ int main(void)
     static uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(25)], tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(25)];
     CHECK(n > 700 && qrcodegen_encodeText(url, tmp, qr, qrcodegen_Ecc_LOW, 1, 25, qrcodegen_Mask_AUTO, true));
     CHECK(qrcodegen_getSize(qr) >= 21 && qrcodegen_getSize(qr) <= 117);
+
+    /* life left as a time (trend_life_eta) */
+    {
+        trend_rec r[6];
+        trend_eta e;
+        char et[96];
+        memset(r, 0, sizeof r);
+        const int ymd[6][3] = {{2026, 1, 1}, {2026, 1, 20}, {2026, 2, 10}, {2026, 3, 1}, {2026, 3, 20}, {2026, 4, 1}};
+        const int life[6] = {100, 100, 99, 99, 98, 98};
+        for (int i = 0; i < 6; i++) { r[i].year = ymd[i][0]; r[i].month = ymd[i][1]; r[i].day = ymd[i][2]; r[i].life = life[i]; }
+        trend_life_eta(r, 6, &e);       /* 2 points in 90 days: 98 / (2/90) days = about 145 months, over the cap */
+        CHECK(e.state == TREND_ETA_OVER && e.days == 90 && e.drop == 2 && e.reads == 6);
+        trend_eta_text(&e, et, sizeof et);
+        CHECK(!strcmp(et, "over 10 years to 0 % (2 points in 90 days)"));
+        const int fast[6] = {60, 55, 50, 45, 40, 36};   /* the least-squares line: 36 left in about 5 months */
+        for (int i = 0; i < 6; i++) r[i].life = fast[i];
+        trend_life_eta(r, 6, &e);
+        CHECK(e.state == TREND_ETA_OK && e.months == 5 && e.drop == 24);
+        trend_eta_text(&e, et, sizeof et);
+        CHECK(!strcmp(et, "about 5 months to 0 % (24 points in 90 days)"));
+        r[5].life = 1;                  /* a steep line: under a month */
+        trend_life_eta(r, 6, &e);
+        CHECK(e.state == TREND_ETA_OK && e.months == 0);
+        trend_eta_text(&e, et, sizeof et);
+        CHECK(!strncmp(et, "under a month to 0 %", 20));
+        r[5].life = 0;
+        trend_life_eta(r, 6, &e);
+        CHECK(e.state == TREND_ETA_ZERO);
+        for (int i = 0; i < 6; i++) r[i].life = 97;   /* no drop */
+        trend_life_eta(r, 6, &e);
+        CHECK(e.state == TREND_ETA_NO_DROP && e.days == 90);
+        trend_eta_text(&e, et, sizeof et);
+        CHECK(!strcmp(et, "no estimate yet: life left has not dropped in 90 days"));
+        r[0].life = 99;                 /* a drop, but 13 days only */
+        r[1].year = 2026; r[1].month = 1; r[1].day = 14;
+        trend_life_eta(r, 2, &e);
+        CHECK(e.state == TREND_ETA_SHORT && e.days == 13);
+        trend_eta_text(&e, et, sizeof et);
+        CHECK(!strcmp(et, "no estimate yet: 13 days of reads, it needs 14"));
+        trend_life_eta(r, 1, &e);
+        CHECK(e.state == TREND_ETA_SHORT && e.reads == 1);
+        for (int i = 0; i < 6; i++) r[i].life = -1;   /* an HDD: no life value */
+        trend_life_eta(r, 6, &e);
+        CHECK(e.state == TREND_ETA_NO_LIFE && e.reads == 0);
+        r[0].life = 90; r[0].month = 12; r[0].day = 31; r[0].year = 2025; r[0].hour = 12;   /* across a year end */
+        r[5].life = 89;
+        trend_life_eta(r, 6, &e);
+        CHECK(e.days == 90 && e.reads == 2 && e.state == TREND_ETA_OVER);
+    }
+
+    /* heat.c: the families, the rise, the paste verdict, the halving */
+    {
+        CHECK(heat_family_parse("slim\n") == FAMILY_SLIM && heat_family_parse("superslim") == FAMILY_SUPER);
+        CHECK(heat_family_parse("fat\r\n") == FAMILY_FAT && heat_family_parse("unknown") == FAMILY_UNKNOWN);
+        CHECK(heat_family_parse("slimmer") == FAMILY_NONE && heat_family_parse("") == FAMILY_NONE);
+        CHECK(heat_family_get(FAMILY_NONE) == NULL && heat_family_get(FAMILY_UNKNOWN) == NULL);
+        CHECK(!strcmp(heat_family_get(FAMILY_SUPER)->key, "superslim"));
+        for (int f = FAMILY_FAT; f <= FAMILY_SUPER; f++)
+            CHECK(heat_family_get(f)->peak_max < 75 && heat_family_parse(heat_family_get(f)->key) == f);
+        short c[40];
+        for (int i = 0; i < 40; i++) c[i] = (short)(50 + i / 3);   /* every 2 s: +10 C at 60 s */
+        CHECK(heat_rise(c, 40, 2) == 10);
+        CHECK(heat_rise(c, 30, 2) == -1);       /* 58 s only */
+        c[30] = -1;
+        CHECK(heat_rise(c, 40, 2) == -1);
+        CHECK(heat_rise(c, 40, 0) == -1);
+        heat_paste p;
+        heat_paste_judge(FAMILY_SUPER, 55, 71, 11, 49, &p);   /* the author's console, about */
+        CHECK(p.verdict == PASTE_OK && p.over == 0 && p.measured == 4);
+        heat_paste_judge(FAMILY_SUPER, 55, 74, 11, 49, &p);
+        CHECK(p.verdict == PASTE_CHECK && p.over == 2);
+        heat_paste_judge(FAMILY_SUPER, 60, 74, 15, -1, &p);   /* no fan read: three values still judge */
+        CHECK(p.verdict == PASTE_LIKELY && p.over == 7 && p.measured == 3);
+        heat_paste_judge(FAMILY_SUPER, 55, 70, -1, -1, &p);   /* under a minute */
+        CHECK(p.verdict == PASTE_NONE && strstr(heat_paste_text(&p), "a minute"));
+        heat_paste_judge(FAMILY_SUPER, 55, 70, -1, 40, &p);   /* the fan does not stand in for the rise */
+        CHECK(p.verdict == PASTE_NONE && p.measured == 3);
+        heat_paste_judge(FAMILY_UNKNOWN, 55, 70, 10, 40, &p);
+        CHECK(p.verdict == PASTE_NONE && strstr(heat_paste_text(&p), "L1"));
+        heat_paste_judge(FAMILY_FAT, 60, 74, 14, 70, &p);     /* at the limits: not above */
+        CHECK(p.verdict == PASTE_OK);
+        short h[5] = {50, 52, -1, -1, 49};
+        CHECK(heat_halve(h, 5) == 3 && h[0] == 52 && h[1] == -1 && h[2] == 49);
+        short g[4] = {-1, 60, 61, -1};
+        CHECK(heat_halve(g, 4) == 2 && g[0] == 60 && g[1] == 61);
+    }
+
+    /* ping.c: the echo packet, the statistics, the verdict */
+    {
+        uint8_t pk[64], ip[84];
+        int len = ping_request(pk, sizeof pk, 0x1234, 7);
+        CHECK(len == 8 + PING_PAYLOAD && pk[0] == 8 && pk[4] == 0x12 && pk[5] == 0x34 && pk[7] == 7);
+        CHECK(ping_csum(pk, len) == 0);         /* a packet with its checksum sums to 0 */
+        CHECK(ping_request(pk, 10, 1, 1) == -1);
+        const uint8_t odd[3] = {0x01, 0x02, 0x03};
+        CHECK(ping_csum(odd, 3) == (uint16_t)~(0x0102 + 0x0300));
+        pk[0] = 0;                              /* the reply: type 0 */
+        CHECK(ping_is_reply(pk, len, 0x1234, 7) && !ping_is_reply(pk, len, 0x1234, 8) && !ping_is_reply(pk, len, 0x1235, 7));
+        memset(ip, 0, sizeof ip);
+        ip[0] = 0x45; ip[9] = 1;                /* IPv4, 20 bytes, ICMP */
+        memcpy(ip + 20, pk, (size_t)len);
+        CHECK(ping_is_reply(ip, 20 + len, 0x1234, 7));
+        ip[9] = 6;                              /* TCP: not ours */
+        CHECK(!ping_is_reply(ip, 20 + len, 0x1234, 7));
+        pk[0] = 8;                              /* our own request echoed by a loopback: not a reply */
+        CHECK(!ping_is_reply(pk, len, 0x1234, 7) && !ping_is_reply(pk, 4, 0x1234, 7));
+        const int t[6] = {1000, 1200, -1, 900, 1100, 800};
+        ping_stats st;
+        ping_calc(t, 6, &st);
+        CHECK(st.sent == 6 && st.got == 5 && st.loss_pct == 16 && st.min_us == 800 && st.max_us == 1200 && st.avg_us == 1000);
+        CHECK(st.jitter_us == 233);             /* |200|, then |200| and |300| after the loss: 700 / 3 */
+        const int lost[3] = {-1, -1, -1};
+        ping_calc(lost, 3, &st);
+        CHECK(st.got == 0 && st.loss_pct == 100 && st.avg_us == 0 && st.jitter_us == 0);
+        net_facts f;
+        char why[128];
+        memset(&f, 0, sizeof f);
+        f.have_ip = 1; f.wired = 1; f.link_type = 6; f.rssi = -1; f.dns_ms = 20;
+        ping_calc(t, 6, &f.ping);
+        CHECK(ping_judge(&f, why, sizeof why) == 1 && strstr(why, "16 %"));   /* 16 % lost */
+        f.ping.loss_pct = 0;
+        CHECK(ping_judge(&f, why, sizeof why) == 0 && !strcmp(why, "the cable link and the router look fine"));
+        f.link_type = 4;
+        CHECK(ping_judge(&f, why, sizeof why) == 1 && strstr(why, "100 Mbit/s full duplex"));
+        f.link_type = 0; f.dns_ms = -2;
+        CHECK(ping_judge(&f, why, sizeof why) == 1 && strstr(why, "DNS"));
+        f.dns_ms = -1; f.wired = 0; f.rssi = 30;
+        CHECK(ping_judge(&f, why, sizeof why) == 1 && strstr(why, "30 %"));
+        f.rssi = 80; f.ping.avg_us = 25000;
+        CHECK(ping_judge(&f, why, sizeof why) == 1 && strstr(why, "25 ms"));
+        ping_calc(lost, 3, &f.ping);
+        CHECK(ping_judge(&f, why, sizeof why) == 2);
+        f.have_ip = 0;
+        CHECK(ping_judge(&f, why, sizeof why) == 2 && !strncmp(why, "no address", 10));
+        CHECK(!strcmp(ping_link_text(6), "1000 Mbit/s full duplex") && !strcmp(ping_link_text(9), "unknown"));
+    }
+
+    /* tone.c: levels, fades, channels, the sweep, the stop */
+    {
+        static float buf[TONE_RATE * 8];
+        tone tn;
+        CHECK(fabs(tone_db(-18) - 0.1259) < 0.001 && fabs(tone_db(0) - 1) < 1e-9);
+        tone_beeps(&tn, 8, 1u << 2, 440, -18);
+        tone_fill(&tn, buf, TONE_RATE);         /* one second: a beep and its gap */
+        float peak = 0, step = 0, others = 0;
+        for (int i = 0; i < TONE_RATE; i++) {
+            float v = buf[i * 8 + 2];
+            if (fabsf(v) > peak) peak = fabsf(v);
+            if (i && fabsf(v - buf[(i - 1) * 8 + 2]) > step) step = fabsf(v - buf[(i - 1) * 8 + 2]);
+            for (int ch = 0; ch < 8; ch++) if (ch != 2) others += fabsf(buf[i * 8 + ch]);
+        }
+        CHECK(peak <= tone_db(-18) + 1e-6 && peak > tone_db(-18) * 0.99);
+        CHECK(others == 0);                     /* only the masked channel */
+        CHECK(step < 0.0075);                    /* no jump bigger than a 440 Hz sine's own step (2 pi f / rate x amp = 0.00724) */
+        CHECK(fabsf(buf[2]) < 1e-6 && buf[(TONE_RATE * 6 / 10 + 10) * 8 + 2] == 0);   /* starts at 0, silent in the gap */
+        CHECK(!tone_done(&tn));
+        tone_stop(&tn);
+        tone_fill(&tn, buf, TONE_RATE / 10);
+        CHECK(tone_done(&tn));
+        tone_fill(&tn, buf, 100);
+        CHECK(buf[0] == 0 && buf[799] == 0);
+        tone_beeps(&tn, 2, 1, 440, -18);        /* a stop inside a beep fades out, no click */
+        tone_fill(&tn, buf, TONE_RATE / 5);
+        tone_stop(&tn);
+        tone_fill(&tn, buf, TONE_RATE / 20);
+        step = 0;
+        for (int i = 1; i < TONE_RATE / 20; i++) if (fabsf(buf[i * 2] - buf[(i - 1) * 2]) > step) step = fabsf(buf[i * 2] - buf[(i - 1) * 2]);
+        CHECK(step < 0.0075 && buf[(TONE_RATE / 20 - 1) * 2] == 0 && buf[1] == 0);
+        tone_sweep(&tn, 2, 3, 20, 20000, 10, -18);
+        CHECK(fabs(tone_freq(&tn) - 20) < 1e-9);
+        for (int k = 0; k < 5; k++) tone_fill(&tn, buf, TONE_RATE);
+        CHECK(fabs(tone_freq(&tn) - 632.5) < 1);   /* half way on a log scale: sqrt(20 x 20000) */
+        for (int k = 0; k < 5; k++) tone_fill(&tn, buf, TONE_RATE);
+        CHECK(tone_done(&tn) && fabs(tone_freq(&tn) - 20000) < 1e-6);
+        float last = buf[(TONE_RATE - 1) * 2];
+        CHECK(fabsf(last) < 1e-4);              /* faded out at the end */
+    }
 
     printf(fails ? "%d check(s) failed\n" : "all checks passed\n", fails);
     return fails != 0;

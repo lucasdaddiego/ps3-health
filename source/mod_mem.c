@@ -102,7 +102,7 @@ static void run_passes(mem_result *r, int passes, int direct)
     r->cancelled = job_cancel;
 }
 
-static void job_xdr(void)
+static void xdr_run(int passes)
 {
     memset(&xdr, 0, sizeof xdr);
     progress("Allocating the user memory in 1 MB blocks");
@@ -110,16 +110,19 @@ static void job_xdr(void)
     while (n < MAX_BLOCKS && (blk[n] = malloc(BLOCK)) != NULL) n++;
     for (int k = 0; k < 8 && n > 0; k++) free(blk[--n]);     /* headroom for the app itself */
     xdr.blocks = n;
-    progress("Testing the user memory (XDR): 4 patterns, each written then verified");
-    run_passes(&xdr, 4, 1);
+    progress(passes == 4 ? "Testing the user memory (XDR): 4 patterns, each written then verified"
+                         : "Testing the user memory (XDR): 1 pattern, written then verified");
+    run_passes(&xdr, passes, 1);
     for (int b = 0; b < n; b++) free(blk[b]);
     xdr.done = 1;
 }
 
+static void job_xdr(void) { xdr_run(4); }
+
 static void *vblk[MAX_BLOCKS];
 static int vn = -1;
 
-static void job_vram(void)
+static void vram_run(int passes)
 {
     memset(&vram, 0, sizeof vram);
     progress("Taking the free RSX memory in 1 MB blocks (kept until the app exits)");
@@ -129,9 +132,33 @@ static void job_vram(void)
     }
     memcpy(blk, vblk, sizeof blk);
     vram.blocks = vn;
-    progress("Testing the RSX memory (GDDR3) through its mapping: 2 patterns, slow by design");
-    run_passes(&vram, 2, 0);
+    progress(passes == 2 ? "Testing the RSX memory (GDDR3) through its mapping: 2 patterns, slow by design"
+                         : "Testing the RSX memory (GDDR3) through its mapping: 1 pattern, slow by design");
+    run_passes(&vram, passes, 0);
     vram.done = 1;
+}
+
+static void job_vram(void) { vram_run(2); }
+
+/* The soak test of the Cooling module: one pattern over the caller's blocks,
+ * written then verified in place, as the XDR test. The errors, and the first
+ * wrong word's address in *first (untouched when none); stop ends it early. */
+long mem_soak_pass(void *const *blocks, int n, int p, volatile int *stop, unsigned long *first)
+{
+    long errors = 0;
+    for (int b = 0; b < n && !*stop; b++) {
+        uint32_t *w = blocks[b];
+        for (unsigned i = 0; i < BLOCK / 4; i++) w[i] = pattern(p, b, i);
+    }
+    for (int b = 0; b < n && !*stop; b++) {
+        const uint32_t *w = blocks[b];
+        for (unsigned i = 0; i < BLOCK / 4; i++)
+            if (w[i] != pattern(p, b, i)) {
+                if (!errors) *first = (unsigned long)(uintptr_t)&w[i];
+                errors++;
+            }
+    }
+    return errors;
 }
 
 /* A wrong word on two lines, so that it fits a third of the screen: where,
@@ -203,6 +230,16 @@ static void ls_judge(void)
         if (e->ticks > ls.ticks) ls.ticks = e->ticks;
     }
     ls.state = ls.errors ? LS_ERRORS : LS_PASS;
+}
+
+/* The quick check's SPU leg, in its job thread: the prompt was asked before
+ * (mem_quick_ask). A start that the journal refuses makes no call. */
+static void ls_quick(void)
+{
+    memset(&ls, 0, sizeof ls);
+    if (spu_blocked(&spu_ls)) spu_up(&spu_ls, SPU_KIT_LS, &ls.r);
+    else job_ls();
+    ls_judge();
 }
 
 /* SQUARE, in the UI thread: -1 on exit. No journal, no SPU call. Then the
@@ -304,7 +341,8 @@ static void mem_card(float x, float y, float w, float h, unsigned btn, const cha
 static void tile_line(char *out, int n, const char *name, const mem_result *r)
 {
     if (!r->done) snprintf(out, n, "%s not tested", name);
-    else snprintf(out, n, "%s %d MB: %s%ld errors", name, r->blocks, r->cancelled ? "stopped, " : "", r->errors);
+    else if (r->cancelled) snprintf(out, n, "%s stopped: %ld errors", name, r->errors);   /* short: line 1 of a tile at the smallest visible area */
+    else snprintf(out, n, "%s %d MB: %ld errors", name, r->blocks, r->errors);
 }
 
 /* An error is red; a stopped test is no pass, yellow, and so is an SPU test
@@ -348,6 +386,48 @@ int mod_mem_open(void)
         footer("CROSS test the user memory  TRIANGLE test the RSX memory  SQUARE test the SPUs  CIRCLE home  START exit");
         ui_flip();
     }
+}
+
+/* The soak test's SPU check (mod_cool.c), in a job or, when the journal
+ * refuses the family, with no call: the local-store test once, into its own
+ * result r. The wrong reads of the six in *errors (saturating); 1 when the
+ * six ended their test, 0 when not (r->why, or a late SPU). */
+int mem_soak_ls(spu_result *r, unsigned *errors)
+{
+    *errors = 0;
+    if (!spu_up(&spu_ls, SPU_KIT_LS, r)) return 0;
+    int done = spu_wait_done(LS_US);
+    spu_down(r);
+    if (!done || r->why[0] || r->terminated) return 0;
+    for (int i = 0; i < SPU_KIT_SPUS; i++) {
+        if (r->rec[i].done != 1) return 0;
+        *errors = r->rec[i].errors > 0xffffffffu - *errors ? 0xffffffffu : *errors + r->rec[i].errors;
+    }
+    return 1;
+}
+
+/* ---- the quick check ----------------------------------------------------- */
+
+int mem_quick_ask(void) { return spu_ask(&spu_ls) < 0 ? -1 : 1; }
+
+/* One pass of each test: the XDR, the RSX memory, the SPU local stores. */
+void mem_quick(void)
+{
+    xdr_run(1);
+    if (!job_cancel) vram_run(1);
+    if (!job_cancel) ls_quick();
+}
+
+int mem_quick_end(char *line, int n)
+{
+    char a[48], b[48];
+    mem_tile();
+    tile_line(a, sizeof a, "XDR", &xdr);
+    tile_line(b, sizeof b, "RSX", &vram);
+    snprintf(line, n, "%s, %s, SPU %s", a, b, ls.state == LS_PASS ? "ok" : ls.state == LS_ERRORS ? "errors" : ls.state == LS_NONE ? "not tested" : ls.state == LS_NOTRUN ? "not run" : "failed");
+    int bad = (xdr.done && xdr.errors) || (vram.done && vram.errors) || ls.state == LS_ERRORS;
+    int stopped = (xdr.done && xdr.cancelled) || (vram.done && vram.cancelled) || (ls.state != LS_NONE && ls.state != LS_PASS) || !xdr.done || !vram.done;
+    return bad ? DOT_BAD : stopped ? DOT_WARN : DOT_OK;
 }
 
 static void report_result(const mem_result *r, const char *name)

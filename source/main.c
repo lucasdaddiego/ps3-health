@@ -1,5 +1,6 @@
-/* PS3 Health: the hardware of a PS3 checked from a HEN app. Six modules behind
- * a home screen: Drive, Cooling, Controller, Display, Transfer, Memory. */
+/* PS3 Health: the hardware of a PS3 checked from a HEN app. Eight modules
+ * behind a home screen: Drive, Cooling, Controller, Display, Audio, Network,
+ * Transfer, Memory. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,13 +15,15 @@ int fs_ok, fs_mk, fs_op, fs_wr;
  * and exit() runs this once, after main returned (no other exit() comes
  * after atexit). So no job thread is left: run_job joins its thread before
  * it returns, the drive poll is settled before a quit, the load threads are
- * joined before the load screen returns. Each boot mark here names the step
- * about to run. */
+ * joined before the load screen returns, the audio thread before the audio
+ * module returns. Each boot mark here names the step about to run. */
 static void leave(void)
 {
     boot_mark("leave");
     spu_last_resort();                       /* a group of SPU threads still up: one more terminate */
     drive_close(&D);
+    boot_mark("audio_end");
+    audio_end();                             /* the module ends its port on every way out; this is the guard */
     boot_mark("net_end");
     net_end();                               /* the network ends before the picture */
     boot_mark("ui_end");

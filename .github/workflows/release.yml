@@ -28,7 +28,7 @@ jobs:
 
       - name: Host test, then make pkg
         run: |
-          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c source/vendor.c source/trend.c source/compat.c source/qrcodegen.c
+          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c source/vendor.c source/trend.c source/compat.c source/qrcodegen.c source/heat.c source/ping.c source/tone.c -lm
           ./test_smart
           make pkg
 

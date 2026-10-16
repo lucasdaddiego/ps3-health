@@ -32,3 +32,58 @@ int trend_parse(const char *line, trend_rec *rec)
     *rec = r;
     return 0;
 }
+
+/* Days since 1970-01-01 of a civil date (Howard Hinnant's days_from_civil),
+ * with the time of day as a fraction. */
+static double day_number(const trend_rec *r)
+{
+    int y = r->year - (r->month <= 2), era = (y >= 0 ? y : y - 399) / 400;
+    int yoe = y - era * 400, mp = (r->month + 9) % 12;
+    int doy = (153 * mp + 2) / 5 + r->day - 1, doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097.0 + doe - 719468 + (r->hour * 60 + r->minute) / 1440.0;
+}
+
+void trend_life_eta(const trend_rec *r, int n, trend_eta *e)
+{
+    int first = -1, last = -1, k = 0;
+    double sx = 0, sy = 0, sxx = 0, sxy = 0, d0 = 0;
+    e->state = TREND_ETA_NO_LIFE;
+    e->months = e->days = e->drop = e->reads = 0;
+    for (int i = 0; i < n; i++) {
+        if (r[i].life < 0) continue;
+        if (first < 0) { first = i; d0 = day_number(&r[i]); }
+        last = i;
+        double x = day_number(&r[i]) - d0, y = r[i].life;
+        sx += x, sy += y, sxx += x * x, sxy += x * y;
+        k++;
+    }
+    e->reads = k;
+    if (k == 0) return;
+    e->days = (int)(day_number(&r[last]) - d0);
+    e->drop = r[first].life - r[last].life;
+    if (r[last].life == 0) { e->state = TREND_ETA_ZERO; return; }
+    if (e->days < TREND_ETA_DAYS) { e->state = TREND_ETA_SHORT; return; }
+    double den = k * sxx - sx * sx, slope = den > 0 ? (k * sxy - sx * sy) / den : 0;   /* points a day */
+    if (e->drop < 1 || slope >= 0) { e->state = TREND_ETA_NO_DROP; return; }
+    double months = r[last].life / -slope / 30.44;
+    if (months > TREND_ETA_CAP) { e->state = TREND_ETA_OVER; return; }
+    e->state = TREND_ETA_OK;
+    e->months = (int)(months + 0.5);
+}
+
+int trend_eta_text(const trend_eta *e, char *out, int n)
+{
+    switch (e->state) {
+    case TREND_ETA_OK:
+        if (e->months < 1) return snprintf(out, n, "under a month to 0 %% (%d points in %d days)", e->drop, e->days);
+        return snprintf(out, n, "about %d month%s to 0 %% (%d point%s in %d days)", e->months, e->months == 1 ? "" : "s", e->drop,
+                        e->drop == 1 ? "" : "s", e->days);
+    case TREND_ETA_OVER: return snprintf(out, n, "over 10 years to 0 %% (%d point%s in %d days)", e->drop, e->drop == 1 ? "" : "s", e->days);
+    case TREND_ETA_NO_LIFE: return snprintf(out, n, "no estimate: no read with a life value");
+    case TREND_ETA_SHORT:
+        if (e->reads == 1) return snprintf(out, n, "no estimate yet: one read, it needs %d days of reads", TREND_ETA_DAYS);
+        return snprintf(out, n, "no estimate yet: %d day%s of reads, it needs %d", e->days, e->days == 1 ? "" : "s", TREND_ETA_DAYS);
+    case TREND_ETA_NO_DROP: return snprintf(out, n, "no estimate yet: life left has not dropped in %d days", e->days);
+    default: return snprintf(out, n, "no estimate: life left is at 0 %%");
+    }
+}

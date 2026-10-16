@@ -20,7 +20,7 @@ body:
     id: firmware
     attributes:
       label: Firmware and app version
-      placeholder: "4.93 (Europe), app 2.1.0"
+      placeholder: "4.93 (Europe), app 2.2.0"
     validations:
       required: true
   - type: input
@@ -44,6 +44,12 @@ body:
     attributes:
       label: Health line and counters
       description: Optional. The health line, hours, temperature and the error counters.
+  - type: textarea
+    id: cooling
+    attributes:
+      label: Cooling line
+      description: Optional. The "cooling:" line of the report after a load test (the console family and the temperatures). It helps set the paste estimate's ranges.
+      placeholder: "Super slim; idle Cell 51 RSX 55 C; peak Cell 67 RSX 71 C; rise 11 C/min; fan 33>49%; load 120 s, 6 SPUs"
   - type: textarea
     id: notes
     attributes:

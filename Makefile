@@ -43,7 +43,7 @@ qrcodegen.o: CFLAGS += -DNDEBUG
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project: ps3gfx first, GNU ld resolves left to right
 #---------------------------------------------------------------------------------
-LIBS	:=	-lps3gfx -lgcm_sys -lio -lm -lsysutil -lnet -lnetctl -lsysmodule
+LIBS	:=	-lps3gfx -lgcm_sys -lio -lm -lsysutil -lnet -lnetctl -laudio -lsysmodule
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing

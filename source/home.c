@@ -1,5 +1,7 @@
-/* The home screen: six tiles with the last result of each module, from
- * APP_DIR/state.txt. It sends no command to the hardware. */
+/* The home screen: eight tiles, four by two, with the last result of each
+ * module, from APP_DIR/state.txt. It sends no command to the hardware. R1
+ * opens the quick check (quick.c). */
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -10,18 +12,14 @@
 #define STATE_FILE APP_DIR "/state.txt"
 
 const module modules[MODULE_COUNT] = {
-    {"Drive", "drive", "The internal drive: SMART, the self-tests and a speed test.", mod_drive_open,
-     mod_drive_report},
-    {"Cooling", "cooling", "Temperatures, the fan duty, and a load test with a curve.", mod_cool_open,
-     mod_cool_report},
-    {"Controller", "pad", "Stick drift, buttons, the sensors and the rumble.", mod_pad_open,
-     mod_pad_report},
-    {"Display", "display", "The output mode, your TV's visible area, test patterns.", mod_display_open,
-     mod_display_report},
-    {"Transfer", "transfer", "The speed of a USB stick, the internet and the LAN.", mod_net_open,
-     mod_net_report},
-    {"Memory", "memory", "Pattern tests on the XDR, the RSX memory and the SPUs.", mod_mem_open,
-     mod_mem_report},
+    {"Drive", "drive", "SMART, self-tests and a speed test.", mod_drive_open, mod_drive_report},
+    {"Cooling", "cooling", "Temperatures, fan, load and soak tests.", mod_cool_open, mod_cool_report},
+    {"Controller", "pad", "Sticks, buttons, sensors, rumble.", mod_pad_open, mod_pad_report},
+    {"Display", "display", "Output mode, visible area, patterns.", mod_display_open, mod_display_report},
+    {"Audio", "audio", "Left, right, 7.1 speakers, a sweep.", mod_audio_open, mod_audio_report},
+    {"Network", "network", "Link, router ping, DNS time.", mod_network_open, mod_network_report},
+    {"Transfer", "transfer", "USB stick, internet, LAN speed.", mod_net_open, mod_net_report},
+    {"Memory", "memory", "XDR, RSX memory, SPU local stores.", mod_mem_open, mod_mem_report},
 };
 
 static tile_state tiles[MODULE_COUNT];
@@ -102,6 +100,17 @@ void state_set(const char *key, int dot, const char *l1, const char *l2)
 
 static u32 dot_color(int dot) { return dot == DOT_OK ? GREEN : dot == DOT_WARN ? YELLOW : dot == DOT_BAD ? RED : GREY; }
 
+/* An arc of a circle as short segments, angles in radians from the x axis. */
+static void arc(float cx, float cy, float r, float a0, float a1, float w, u32 c)
+{
+    batch_begin(c);
+    for (int i = 0; i < 8; i++) {
+        float t0 = a0 + (a1 - a0) * i / 8, t1 = a0 + (a1 - a0) * (i + 1) / 8;
+        batch_line(cx + r * cosf(t0), cy + r * sinf(t0), cx + r * cosf(t1), cy + r * sinf(t1), w);
+    }
+    batch_end();
+}
+
 /* A line icon per module, in a 72 px box. */
 static void icon(int k, float x, float y, u32 c)
 {
@@ -133,7 +142,22 @@ static void icon(int k, float x, float y, u32 c)
         rect(x + 32, y + 50, 8, 10, c);
         round_rect(x + 18, y + 59, 36, 6, 3, c);
         break;
-    case 4:                                  /* up and down arrows */
+    case 4:                                  /* a speaker and two sound waves */
+        round_frame(x + 4, y + 26, 16, 20, 3, 4, c);
+        tri(x + 18, y + 26, x + 38, y + 10, x + 38, y + 62, c);
+        tri(x + 18, y + 26, x + 38, y + 62, x + 18, y + 46, c);
+        arc(x + 38, y + 36, 14, -0.8f, 0.8f, 4, c);
+        arc(x + 38, y + 36, 27, -0.8f, 0.8f, 4, c);
+        break;
+    case 5:                                  /* three linked nodes: the router and two devices */
+        ring(x + 36, y + 14, 10, 4, c);
+        ring(x + 13, y + 58, 10, 4, c);
+        ring(x + 59, y + 58, 10, 4, c);
+        line(x + 31, y + 23, x + 18, y + 49, 4, c);
+        line(x + 41, y + 23, x + 54, y + 49, 4, c);
+        line(x + 23, y + 58, x + 49, y + 58, 4, c);
+        break;
+    case 6:                                  /* up and down arrows */
         line(x + 22, y + 66, x + 22, y + 22, 5, c);
         tri(x + 22, y + 6, x + 9, y + 26, x + 35, y + 26, c);
         line(x + 50, y + 6, x + 50, y + 50, 5, c);
@@ -153,15 +177,20 @@ static void icon(int k, float x, float y, u32 c)
     }
 }
 
+#define COLS 4
+
 static void tile_box(int k, float *x, float *y, float *w, float *h)
 {
     const float gap = 24;
-    *w = (SW - 2 * MG - 2 * gap) / 3;
+    *w = (SW - 2 * MG - (COLS - 1) * gap) / COLS;
     *h = (BOTTOM - 8 - TOP - gap) / 2;
-    *x = MG + (k % 3) * (*w + gap);
-    *y = TOP + (k / 3) * (*h + gap);
+    *x = MG + (k % COLS) * (*w + gap);
+    *y = TOP + (k / COLS) * (*h + gap);
 }
 
+/* The icon and the name on top with the description beside the icon, the
+ * result at the foot: line 1 in the body font, line 2 small on up to two
+ * lines, then the date. At the smallest visible area a tile is 362 x 296. */
 static void draw_tile(int k, int selected)
 {
     float x, y, w, h;
@@ -169,22 +198,22 @@ static void draw_tile(int k, int selected)
     const tile_state *t = &tiles[k];
     round_rect(x, y, w, h, 18, selected ? PANEL2 : PANEL);
     if (selected) round_frame(x - 4, y - 4, w + 8, h + 8, 22, 3, WHITE);
-    icon(k, x + 28, y + 26, selected ? WHITE : BLUE);
-    text(x + 124, y + 26, F_MED, WHITE, "%s", modules[k].name);
-    if (t->dot) disc(x + w - 42, y + 46, 11, dot_color(t->dot));
-    else ring(x + w - 42, y + 46, 9, 3, DIM);    /* hollow: not run yet */
-    text_wrap(x + 124, y + 74, F_SMALL, selected ? GREY : DIM, w - 152, 3, modules[k].desc);   /* beside the icon */
-    float tw = w - 56, ty = y + h - 124;     /* the result sits at the foot of the tile */
+    icon(k, x + 24, y + 24, selected ? WHITE : BLUE);
+    text_fit(x + 112, y + 22, F_MED, WHITE, w - 170, "%s", modules[k].name);
+    if (t->dot) disc(x + w - 36, y + 42, 11, dot_color(t->dot));
+    else ring(x + w - 36, y + 42, 9, 3, DIM);    /* hollow: not run yet */
+    text_wrap(x + 112, y + 68, F_SMALL, selected ? GREY : DIM, w - 132, 2, modules[k].desc);   /* beside the icon */
+    float tw = w - 48, ty = y + h - 148;     /* the result sits at the foot of the tile */
     if (t->dot || t->l1[0]) {
-        text_fit(x + 28, ty, F_BODY, WHITE, tw, "%s", t->l1);
-        text_fit(x + 28, ty + 40, F_BODY, GREY, tw, "%s", t->l2);
-        text(x + 28, y + h - 44, F_SMALL, DIM, "Last run %s", t->when);
-    } else text(x + 28, ty + 40, F_BODY, GREY, "Not run yet");
+        text_fit(x + 24, ty, F_BODY, WHITE, tw, "%s", t->l1);
+        text_wrap(x + 24, ty + 40, F_SMALL, GREY, tw, 2, t->l2);
+        text(x + 24, y + h - 38, F_SMALL, DIM, "Last run %s", t->when);
+    } else text(x + 24, ty + 40, F_BODY, GREY, "Not run yet");
 }
 
 static void draw_verdict(void)
 {
-    char bad[96] = "", warn[96] = "", none[96] = "", msg[200];
+    char bad[128] = "", warn[128] = "", none[128] = "", msg[240];
     int nb = 0, nw = 0, nn = 0;                  /* counts */
     for (int k = 0; k < MODULE_COUNT; k++) {
         const char *nm = modules[k].name;
@@ -197,8 +226,8 @@ static void draw_verdict(void)
     }
     if (nb) snprintf(msg, sizeof msg, "Problem found: %s. Open the module for the details.", bad);
     else if (nw) snprintf(msg, sizeof msg, "Check: %s. Open the module for the details.", warn);
-    else if (nn == 0) snprintf(msg, sizeof msg, "No problem found in the six modules.");
-    else if (nn == MODULE_COUNT) snprintf(msg, sizeof msg, "Open a module with CROSS. Each one explains what it does before it runs.");
+    else if (nn == 0) snprintf(msg, sizeof msg, "No problem found in any module.");
+    else if (nn == MODULE_COUNT) snprintf(msg, sizeof msg, "Open a module with CROSS, or R1 for a quick check. Each one explains what it does before it runs.");
     else snprintf(msg, sizeof msg, "No problem found. Not run yet: %s.", none);
     status_line(msg, nb ? RED : nw ? YELLOW : nn == MODULE_COUNT ? GREY : GREEN);
 }
@@ -213,9 +242,10 @@ int home_screen(int sel)
         if (quit || (pressed & BTN_START)) return -1;
         if (pressed & BTN_CROSS) return sel;
         if ((pressed & BTN_TRIANGLE) && help_screen() < 0) return -1;
-        if (pressed & BTN_RIGHT) sel = sel % 3 == 2 ? sel - 2 : sel + 1;
-        if (pressed & BTN_LEFT) sel = sel % 3 == 0 ? sel + 2 : sel - 1;
-        if (pressed & (BTN_UP | BTN_DOWN)) sel = (sel + 3) % MODULE_COUNT;
+        if ((pressed & BTN_R1) && fs_ok && quick_screen() < 0) return -1;   /* the quick check needs the journal, as Drive and Cooling */
+        if (pressed & BTN_RIGHT) sel = sel % COLS == COLS - 1 ? sel - (COLS - 1) : sel + 1;
+        if (pressed & BTN_LEFT) sel = sel % COLS == 0 ? sel + (COLS - 1) : sel - 1;
+        if (pressed & (BTN_UP | BTN_DOWN)) sel = (sel + COLS) % MODULE_COUNT;
         if (fs_ok && gesture(BTN_SQUARE) == BTN_SQUARE) {   /* no writable folder: nothing to clear */
             int rc = journal_clear();
             if (rc == 0) snprintf(msg, sizeof msg, "Freeze journal cleared. Skipped and frozen calls run again. The Drive steps run again after a restart.");
@@ -229,7 +259,7 @@ int home_screen(int sel)
         for (int k = 0; k < MODULE_COUNT; k++) draw_tile(k, k == sel);
         if (!fs_ok) {                        /* the file test codes take the line of the report path */
             if (msg[0]) status_line(msg, msg_color);
-            else status_line("The app cannot write " APP_DIR ": no journal, so Drive and Cooling stay closed.", RED);
+            else status_line("The app cannot write " APP_DIR ": no journal, so Drive, Cooling and Audio stay closed.", RED);
             text_fit(MG, Y_NOTE, F_SMALL, GREY, SW - 2 * MG, "File test: mkdir rc 0x%08x, open rc 0x%08x, write rc 0x%08x",
                      (unsigned)fs_mk, (unsigned)fs_op, (unsigned)fs_wr);
         } else {
@@ -238,7 +268,7 @@ int home_screen(int sel)
             else draw_verdict();
             report_footnote();
         }
-        footer(fs_ok ? "D-pad choose  CROSS open  TRIANGLE help  SELECT report to USB  SQUARE twice clear journal  START exit"
+        footer(fs_ok ? "D-pad choose  CROSS open  R1 quick check  TRIANGLE help  SELECT report to USB  SQUARE twice clear journal  START exit"
                      : "D-pad choose  CROSS open  TRIANGLE help  SELECT report to USB  START exit");
         ui_flip();
     }

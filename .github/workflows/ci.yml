@@ -25,9 +25,9 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Host test (SMART decoders, vendor tables, trend lines, issue link, QR)
+      - name: Host test (SMART decoders, vendor tables, trend lines and life left, issue link, QR, heat, ping, tones)
         run: |
-          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c source/vendor.c source/trend.c source/compat.c source/qrcodegen.c
+          cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c source/vendor.c source/trend.c source/compat.c source/qrcodegen.c source/heat.c source/ping.c source/tone.c -lm
           ./test_smart
 
       - name: Speed test preserves existing files and handles I/O failures

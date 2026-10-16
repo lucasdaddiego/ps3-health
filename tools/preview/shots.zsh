@@ -30,7 +30,7 @@ PY
 J=$'done error_log rc=0x00000000 ok=1\ndone gpl_devstat rc=0x00000000 ok=1\ndone gpl_phy rc=0x00000000 ok=1\ndone fan_policy rc=0x00000000 ok=1\ndone spu_import rc=0x00000000 ok=1\n'
 # the tiles of the home shot: results from the test console (2.0.0; the RSX memory
 # test from 2.0.1), the hours as in the dumps
-ST=$'drive|1|2026-10-08|Dahua V800 2.5 inch SATA 1TB SSD|Health OK, 934 h (38 d)\ncooling|1|2026-10-08|Cell 51>67 C, RSX 55>71 C|fan 33>49%, 2:00 load\npad|1|2026-10-08|Drift L 0.8%, R 0.8%|Circle L 100%, R 100%\ndisplay|1|2026-10-08|1920x1080p 16:9|Visible area 1920 x 1080\ntransfer|1|2026-10-08|USB 3/14 MB/s|net 33, LAN 79 Mbit/s\nmemory|1|2026-10-08|XDR 194 MB: 0 errors|RSX 231 MB: 0 errors\n'
+ST=$'drive|1|2026-10-08|Health OK, 934 h|Dahua V800 2.5 inch SATA 1TB SSD\ncooling|1|2026-10-08|Cell 51>67, RSX 55>71 C|fan 33>49%, 2:00 load\npad|1|2026-10-08|Drift L 0.8%, R 0.8%|Circle L 100%, R 100%\ndisplay|1|2026-10-08|1920x1080p 16:9|Visible area 1920 x 1080\ntransfer|1|2026-10-08|USB 3/14 MB/s|net 33, LAN 79 Mbit/s\nmemory|1|2026-10-08|XDR 194 MB: 0 errors|RSX 231 MB: 0 errors\n'
 # trend.txt of the trend shot: readings of the test SSD kept by hand, in local time (the open adds one more)
 TS=$'drive Dahua V800 2.5 inch SATA 1TB SSD\n2026-10-06 16:52 918 38 72018 100 0\n2026-10-06 19:45 921 36 72132 100 0\n2026-10-07 19:52 934 36 72607 100 0\n'
 shot() {   # name script [VAR=value ...]; AREA, JOURNAL, STATE, TREND from the caller
@@ -44,6 +44,7 @@ shot() {   # name script [VAR=value ...]; AREA, JOURNAL, STATE, TREND from the c
     [[ -n $JOURNAL ]] && print -rn -- "$JOURNAL" > $sbx/dev_hdd0/tmp/ps3_health/journal.txt
     [[ -n $STATE ]] && print -rn -- "$STATE" > $sbx/dev_hdd0/tmp/ps3_health/state.txt
     [[ -n $TREND ]] && print -rn -- "$TREND" > $sbx/dev_hdd0/tmp/ps3_health/trend.txt
+    print -r -- superslim > $sbx/dev_hdd0/tmp/ps3_health/family.txt   # the test console: Cooling does not ask
     env PV_ROOT=$sbx PV_DRIVE=$M PV_OUT=$OUT PV_SCRIPT="$script" "$@" $P/build/pv 2>&1 | grep -v '^snap' || true
 }
 FULL='0 0 1920 1080'
@@ -53,7 +54,7 @@ AREA=$FULL JOURNAL=$J STATE= TREND=$TS shot trend "4:CROSS 12:CROSS 120:RIGHT 12
 AREA=$FULL JOURNAL=$J STATE= shot cool "4:RIGHT 6:CROSS 60:CROSS 7400:SNAP=cooling 7401:EXIT" PV_RISE=1
 AREA=$FULL JOURNAL=$J STATE= shot pad "4:RIGHT 6:RIGHT 8:CROSS 20-30:L2+UP+TRIANGLE+START 25:SNAP=controller 26:EXIT" PV_STICKS=3,-2,0,1
 AREA= JOURNAL= STATE= shot calib "3:SNAP=calibration 4:EXIT"
-AREA=$FULL JOURNAL=$J STATE= shot mem "4:DOWN 6:RIGHT 8:RIGHT 10:CROSS 20:CROSS 2000:SNAP=memory 2001:EXIT"
+AREA=$FULL JOURNAL=$J STATE= shot mem "4:DOWN 6:LEFT 10:CROSS 20:CROSS 2000:SNAP=memory 2001:EXIT"
 ${PYTHON:-python3} -I - "$OUT" "$R/docs" <<'PY'
 import glob, os, sys
 from PIL import Image

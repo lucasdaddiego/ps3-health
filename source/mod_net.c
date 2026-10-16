@@ -42,7 +42,7 @@ static void net_addr(void)
     else snprintf(my_ip, sizeof my_ip, "no address");
 }
 
-/* Every caller comes here. The first start (netInitialize, the netctl module,
+/* Every caller comes here, the Network module's tests too. The first start (netInitialize, the netctl module,
  * netCtlInit, the first address read) is one journaled call, so a start that
  * froze the console never runs again. Then no network call runs at all:
  * libnetctl needs the module that the start loads. The first read is inside
@@ -51,7 +51,7 @@ static void net_addr(void)
  * SQUARE twice brings the start back in the same session. A failed
  * netInitialize runs again at the next call; the module load and netCtlInit
  * run until each succeeded once. */
-static void net_init(void)
+void net_init(void)
 {
     if (!net_up) {
         net_frozen = !journal_start("net_start");   /* 0 for a frozen or skipped entry */
@@ -66,6 +66,9 @@ static void net_init(void)
     }
     net_addr();                              /* a later read: no screen promises a skip for it */
 }
+
+int net_is_up(void) { return net_up; }
+int net_start_frozen(void) { return net_frozen; }
 
 /* The network's end, from leave(): no job thread runs then, so no socket
  * call is in flight, and every job closed its sockets. PSL1GHT's sample

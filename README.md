@@ -3,26 +3,34 @@
 <img src="docs/icon.png" width="320" alt="PS3 Health icon">
 
 A PS3 homebrew app that checks the console's hardware from the TV, with no PC
-and no opening the console. Six modules behind one home screen:
+and no opening the console. Eight modules behind one home screen:
 
 - **Drive:** IDENTIFY and SMART of the internal HDD or SSD, the attribute table
   with vendor names, a health line, a trend of every full read (power-on hours,
-  temperature, life, host writes, error counts), the short and the extended
-  self-test, and a file speed test.
-- **Cooling:** the Cell and RSX temperatures, the fan duty, and a timed load
-  test on the PPU, the six SPUs and the RSX with a temperature curve; the
-  test stops by itself at 75 C.
+  temperature, life, host writes, error counts) with the SSD's wear trend, the
+  short and the extended self-test, and a file speed test.
+- **Cooling:** the Cell and RSX temperatures, the fan duty, a timed load test
+  on the PPU, the six SPUs and the RSX with a temperature curve, a paste
+  estimate for your console model, and a 30 or 60 minute soak test with
+  memory checks; every test stops by itself at 75 C.
 - **Controller:** stick rest offset (drift) and circle coverage, every button
   with its pressure, the sixaxis sensors, the rumble motors.
 - **Display:** the video output, the visible area of your TV, full-screen
   test patterns (with a 1-pixel stripe test for TV scaling) and a lag timer.
+- **Audio:** a beep on the left and on the right speaker, a walk over the
+  eight channels of 7.1, and a sweep from 20 Hz to 20 kHz; you answer heard or
+  not heard.
+- **Network:** the connection (cable or Wi-Fi, link speed, signal, MTU,
+  addresses), 20 pings to the router and the time of a DNS lookup.
 - **Transfer:** the 64 MB file test on a USB stick, a 50 MB download over plain
   HTTP, and a LAN test where the app is the server and a PC sends it data.
 - **Memory:** pattern tests on the user memory (XDR), on the RSX memory
   (GDDR3), and on the local store of each of the six SPUs.
 
-Help (TRIANGLE on the home screen) has a QR code that opens a prefilled GitHub
-issue with the compatibility report, and a short guide.
+R1 on the home screen runs the quick check: the short tests that need no
+answer, in one run, with one verdict. Help (TRIANGLE on the home screen) has a
+QR code that opens a prefilled GitHub issue with the compatibility report, and
+a short guide.
 
 The home screen shows the last result of each module from a small state file
 and sends no command to the hardware. Every result goes into one text report on
@@ -53,7 +61,7 @@ temperatures, the SPU rates, the sticks and the memory size are simulated.
 <td><img src="docs/summary.png" alt="Drive, summary page"><br>Drive, summary page.</td>
 </tr>
 <tr>
-<td><img src="docs/cooling.png" alt="Cooling module"><br>Cooling: a 2-minute load test and its temperature curve.</td>
+<td><img src="docs/cooling.png" alt="Cooling module"><br>Cooling: a 2-minute load test, its temperature curve and the paste estimate.</td>
 <td><img src="docs/controller.png" alt="Controller module"><br>Controller: the sticks, every button with its pressure, the sensors.</td>
 </tr>
 <tr>
@@ -70,7 +78,9 @@ temperatures, the SPU rates, the sticks and the memory size are simulated.
 
 The app was tested on one console: a PS3 Super Slim on **HFW 4.93 with PS3HEN
 3.6.0** and a Dahua V800 1 TB SATA SSD. The table lists the versions tested on
-the console.
+the console. The parts new in 2.2.0 (Audio, Network, the quick check, the wear
+trend, the paste estimate and the soak test) are checked in the host preview
+only until a 2.2.0 row is in the table.
 
 It is **not tested** on CFW (Evilnat, Rebug and others), on fat or slim models, on
 other firmware versions, or on original HDDs. On another setup, a drive command
@@ -104,7 +114,7 @@ ends with the same text.
 
 ## Install
 
-1. Download `PS3-Health-v2.1.0.pkg` from [Releases](../../releases).
+1. Download `PS3-Health-v2.2.0.pkg` from [Releases](../../releases).
 2. Copy it to `/dev_hdd0/packages/` (FTP), or to the root of a FAT32 USB stick.
 3. With HEN on, install it: Game → Package Manager → Install Package Files (Standard
    or USB).
@@ -117,11 +127,12 @@ edges until the four arrow tips touch the edges of the picture (D-pad: both
 sides together; SQUARE: one edge at a time), then CROSS. CIRCLE keeps the
 default, 93 % of the screen. The Display module can change it later.
 
-The home screen: six tiles, each with what the module checks, a dot (green ok,
-yellow check, red problem, hollow when the module never ran), two lines from
-the last result and its date (in the console's time zone), and a verdict line
-under them. D-pad chooses, CROSS opens a module, CIRCLE in a module goes back
-home, START exits. TRIANGLE opens Help: the QR code of the compatibility
+The home screen: eight tiles, four by two, each with what the module checks, a
+dot (green ok, yellow check, red problem, hollow when the module never ran),
+two lines from the last result and its date (in the console's time zone), and
+a verdict line under them. D-pad chooses (LEFT and RIGHT wrap around a row, UP
+and DOWN change the row), CROSS opens a module, CIRCLE in a module goes back
+home, START exits. R1 runs the quick check (below). TRIANGLE opens Help: the QR code of the compatibility
 report (it opens a prefilled GitHub issue on a phone; nothing is sent until
 you submit it) and a short guide. SELECT copies the report, `journal.txt` and
 `trend.txt` to the first USB stick found, into `ps3_health/`. When the console
@@ -131,6 +142,24 @@ after a freeze inside it, SELECT copies nothing until the journal is cleared.
 SQUARE twice clears the freeze journal (see Safety). The button line at the
 bottom of each screen shows the controller's own symbols.
 
+### Quick check
+
+R1 on the home screen first shows the four steps; CROSS runs them in order,
+each with the module's own code and journal entries:
+1. Drive: the drive read of the session, or a new SMART read (no self-test,
+   no first-run prompt of the optional logs).
+2. Cooling: the temperatures and the fan duty at rest.
+3. Memory: one pattern over the user memory (XDR) and the RSX memory, then the
+   SPU local-store test.
+4. Network: the connection data and five pings to the router.
+
+A first-run prompt that was never answered (the fan, the SPUs) comes before
+the run. The steps run behind a counter; CIRCLE stops after the step that
+runs, and the rest show "not run". One verdict screen lists each step with its
+dot and result, and each module's tile changes as after a normal run. The
+whole check takes a few minutes, most of it the RSX memory. Without a writable
+app folder there is no journal, and R1 does nothing.
+
 ### Drive
 
 1. The first screen offers **CROSS** to read the drive and TRIANGLE for demo
@@ -139,6 +168,14 @@ bottom of each screen shows the controller's own symbols.
    - UP/DOWN scroll the table and the trend, L1/R1 by a screen.
    - CROSS reads the drive again. Rows whose raw value changed since the
      previous read turn blue.
+   - The summary page has the SSD's **wear trend**: a straight line through
+     the life left of the reads in `trend.txt` (least squares over the days)
+     gives "about N months to 0 %", once the reads span 14 days and life left
+     dropped by a point or more; past 10 years it says "over 10 years". Until
+     then it says why there is no estimate (one read, too few days, no drop).
+     It is a rough guide: wear is not linear, and the attribute counts in whole
+     points. The report has the same line. At the smallest visible area it
+     shares the life row.
    - The trend page lists the full reads of this drive from `trend.txt`,
      newest first: the local date and time, the power-on hours, the drive
      temperature, the life left, the host writes and the sum of the error
@@ -196,6 +233,43 @@ cooling: under 72 C ok, 72 C and above "warm, clean it". The test stops at
 75 C, so no result is red. The console protects itself and shuts down near
 85 C. The app never writes to the fan.
 
+**Console model and paste estimate.** The first open asks once for the
+console family: fat (CECHA to CECHQ), slim (CECH-20xx to 30xx) or super slim
+(CECH-40xx), from the label at the back. CIRCLE skips it; L1 changes it later.
+The answer goes into `family.txt`. After each test the module compares four
+values with that family's usual range: the hotter chip before the load, its
+peak, its rise over the first 60 s (C a minute) and the fan duty at the end.
+None above the range: "no sign of dry paste"; one: "dust or old paste is
+possible"; two or more: "dry paste or dust is likely". It is an **estimate**,
+and the screen says so. The ranges are provisional, in one table in
+`source/heat.c`:
+
+| Family | Idle | Peak | Rise in the first minute | Fan at the end |
+|---|---|---|---|---|
+| Fat | 62 C | 74 C | 14 C | 70 % |
+| Slim | 56 C | 72 C | 12 C | 60 % |
+| Super slim | 58 C | 72 C | 12 C | 60 % |
+
+The super slim row comes from one console (the author's, with a margin); the
+fat and slim rows are guesses from the chips' generations, not measured. The
+compatibility text (Help's QR code and the report) carries a Cooling line after
+a load test: the family, the idle and peak temperatures, the rise, the fan and
+the test length, and no identifier. Reports with it will set real ranges.
+
+**Soak test.** R1 offers 30 or 60 minutes of turns: a load turn of 4 minutes
+(two PPU threads, the six SPUs on the heat program, the RSX fill), then a
+memory turn of 1 minute while the chips are warm (the six SPUs test their
+local stores once, then a PPU thread writes and checks the Memory module's four
+patterns over 64 MB of user memory, while the RSX keeps its load). Only one
+SPU group runs at a time: the heat group ends before the local-store test.
+The soak keeps the load test's stops (75 C, two failed reads, an SPU that stops
+reporting during a load turn) and CIRCLE stops it cleanly. The curve keeps its
+400 samples by halving them when full (each pair becomes its higher value), so
+an hour fits. Each turn is one journal entry (`soak_load`, `soak_mem`) from its
+start to its end; a freeze inside keeps the soak off until the journal is
+cleared. A memory error under heat is a red result; the result card shows the
+memory passes, the local-store tests and their errors.
+
 ### Controller
 
 Live view of both sticks, every button with its pressure value, L2/R2 bars,
@@ -220,6 +294,52 @@ gray ramp, a crosshatch with a circle for geometry and aspect, 1-pixel stripes
 scales the picture, overscan on), and a lag pattern with a millisecond timer
 and a moving bar to film next to the source; CROSS there flashes one white
 frame.
+
+### Audio
+
+Every sound plays at -18 dBFS with a fade at each end, so nothing clicks; set
+the TV to a normal volume first. After each sound you answer CROSS heard or
+CIRCLE not heard; TRIANGLE stops the test.
+- CROSS: 440 Hz beeps on the left speaker, then on the right. Each beeps until
+  you answer.
+- TRIANGLE: the speaker walk, the eight channels of an 8-channel port one by
+  one (front left, front right, centre, the subwoofer at 50 Hz, surround left
+  and right, back left and right), each named on screen and shown on a plan of
+  the room. On a stereo TV the system mixes the extra channels into the two
+  speakers and may drop the subwoofer: "not heard" there is no fault.
+- SQUARE: one tone from 20 Hz to 20 kHz in 12 s on both front speakers, even
+  on a log scale. Most ears stop near 15 kHz; a rattle or a buzz on the way is
+  a speaker or a cable.
+
+The app opens one port of the system's audio library: eight channels at
+48 kHz when the system gives them, else two (then no walk, and the screen says
+so). A thread keeps the port's ring of 16 blocks about 43 ms ahead. The start
+(the audio module, the library, the port) is one journaled call at the first
+test, behind the counter; the end (the port stop and close, the library, the
+module unload) is another, at every way out of the module and once more at the
+exit. The tile and the report keep each answer. Without a writable app folder
+the module stays closed.
+
+### Network
+
+The connection as the system's netctl library reports it: cable or Wi-Fi, the
+link speed and duplex on a cable, the signal (in %) and the channel on Wi-Fi,
+the MTU, the console's address (DHCP or static), the router and the DNS
+servers. The MAC address is never read. CROSS sends 20 pings to the router and
+looks up `example.com` (a name kept for examples, on every DNS server) once,
+timed. The verdict: no address or no answer is a problem; a loss over 5 %, a
+Wi-Fi signal under 40 %, a cable link under 1000 Mbit/s full duplex, an
+average over 20 ms, a jitter over 10 ms, a failed DNS lookup or one over
+300 ms is a check. These limits are for the router on the same network, not
+the internet.
+
+A ping is an ICMP echo on a raw socket, one journaled call (`ping_icmp`) from
+the socket to its close. When the system refuses the raw socket, the router
+does not answer the first three, the journal says ICMP froze before, or there
+is no journal, the ping is the time of a TCP connect to the router's port 80
+(53 when 80 gives nothing): its answer, a connection or a refusal, is one
+round trip too. The screen and the report say which method ran and why. The
+network starts as in Transfer, as the same journaled call.
 
 ### Transfer
 
@@ -277,6 +397,8 @@ In `/dev_hdd0/tmp/ps3_health/`:
 - `compat.txt` — the compatibility text of the last Drive result. Help shows
   it until the Drive module runs in the session.
 - `safe_area.txt` — the visible area, in 1920 x 1080 units.
+- `family.txt` — the console family for the paste estimate: `fat`, `slim`,
+  `superslim`, or `unknown` when the question was skipped.
 - `net_url.txt` — optional, the `http://` URL for the download test.
 - `identify.bin`, `smart.bin`, `thresh.bin`, `selftest.bin`, `errlog.bin`,
   `devstat.bin`, `phy.bin`, `devinfo.bin` — the raw sectors of the last drive
@@ -332,17 +454,21 @@ slows the drive while it runs.
 The other system calls, all read-only and journaled like the drive calls:
 383 `sys_game_get_temperature` (Cell and RSX) and, behind a first-run prompt,
 409 `sys_sm_get_fan_policy` (the fan duty). The speed and USB tests use the
-normal file calls, the Transfer module the normal socket calls, the Memory
-module's XDR and RSX tests their own allocations, the Display module the
-video state read. The network start (the first open of Transfer), its end at
-the exit and the copy to a USB stick (SELECT) are journaled too. (Raw sector
+normal file calls, the Transfer and Network modules the normal socket calls
+(the Network module's ping a raw ICMP socket, else a TCP connect), the Memory
+module's XDR and RSX tests and the soak test's memory turns their own
+allocations, the Display module the video state read, the Audio module one
+port of the system's audio library (calls into the firmware's library, not
+syscalls). The network start (the first open of Transfer or Network), its end
+at the exit, the ICMP run, the audio start and end, each turn of the soak test
+and the copy to a USB stick (SELECT) are journaled too. (Raw sector
 reads, syscall 602, and the console id, syscall 870, are refused on HEN: ENXIO
 and EPERM on the test console. The app does not call them.) The build checks
 this: `tools/syscalls.py` scans the ELF for every syscall number and fails on
 602, 604 or 870, or on a number outside `tools/syscalls.allow`.
 
-The Memory module's SPU test and the Cooling module's load test run the
-app's own program on the six SPUs, behind one first-run prompt (asked at the
+The Memory module's SPU test and the Cooling module's load and soak tests run
+the app's own program on the six SPUs (the soak one group at a time), behind one first-run prompt (asked at the
 first use in either module; a skip is kept until SQUARE twice clears the
 journal). They use LV2's SPU calls: 169 `sys_spu_initialize` (once per start
 of the app), 170 to 173 (create the SPU thread group, destroy it, a thread in
@@ -459,10 +585,14 @@ contract). The app links `libps3gfx.a` and includes `<ps3gfx/ui.h>`,
 the library's README has the API by header, and its `source/gfx/README.md` the
 frame model, the memory layout, the source of each RSX word and the recipe for
 the shader words. What stays here: `main.c` and `app.h` (the modules behind
-the `module` struct), `home.c` (the home screen and `state.txt`), `help.c`
-(the Help screen with the QR code), `report.c` (the report and the USB copy),
-one `mod_*.c` per module, `ata.c` and `smart.c` (the drive access and the
-decoders), `trend.c` (the lines of `trend.txt`), `spu_run.c` (the SPU
+the `module` struct), `home.c` (the home screen and `state.txt`), `quick.c`
+(the quick check), `help.c` (the Help screen with the QR code), `report.c`
+(the report and the USB copy), one `mod_*.c` per module, `ata.c` and
+`smart.c` (the drive access and the decoders), `trend.c` (the lines of
+`trend.txt` and the wear trend), the pure C of three modules with their host
+tests: `heat.c` (the families, the paste estimate, the halving of a curve),
+`ping.c` (the echo packet, the ping statistics, the network verdict) and
+`tone.c` (the beeps and the sweep), `spu_run.c` (the SPU
 driver: the journaled group of six SPU threads of the SPU kit), `boot.c`
 (the marks of `boot.txt`), the vendor table, the compatibility text and the
 QR encoder.
@@ -505,8 +635,9 @@ that the archive is there and that its `COMMIT` equals the pin (`PS3GFX_DEV=1`
 skips the stamp check, for a build against a working clone installed by hand).
 Then `build.sh`:
 1. runs the host unit test (`test/test_smart.c`: the decoders, the vendor table,
-   the summary, the delta, the trend lines, the issue link and a QR encode) on
-   the Mac;
+   the summary, the delta, the trend lines and the wear trend, the issue link,
+   a QR encode, the paste estimate, the ping statistics and the tones) on the
+   Mac;
 2. runs `make pkg`;
 3. runs `python3 -I tools/syscalls.py build/ps3_health.elf`: it lists the LV2
    syscall numbers the ELF makes (each `li r11, N` before an `sc`) and fails
@@ -549,7 +680,7 @@ Toolchain findings that cost the most time:
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push: the host test of
 the decoder, a compile and `--help` smoke of the Python scripts with the
 `syscalls.py` self-test, a check that `APP_VER` and `VERSION` in `sfo.xml` match
-`source/version.h` (2.1.0 is 02.10), and a pkg build on Linux with the same
+`source/version.h` (2.2.0 is 02.20), and a pkg build on Linux with the same
 `sdk_setup.sh` (the pkg is a workflow artifact) followed by the syscall audit of
 its ELF. The signed EBOOT is verified in CI only when the repository secret
 `PS3DEV_KEYS_TOML` holds the key file. A `v*` tag

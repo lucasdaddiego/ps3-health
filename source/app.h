@@ -1,4 +1,4 @@
-/* The app: six modules behind a home screen, one report, one journal. */
+/* The app: eight modules behind a home screen, one report, one journal. */
 #ifndef APP_H
 #define APP_H
 
@@ -18,7 +18,7 @@ typedef struct {
     void (*report)(void);
 } module;
 
-#define MODULE_COUNT 6
+#define MODULE_COUNT 8
 extern const module modules[MODULE_COUNT];
 
 /* The last result of each module, kept in APP_DIR/state.txt for the home
@@ -38,6 +38,7 @@ extern int fs_mk, fs_op, fs_wr;    /* the file test return codes, for the home s
 
 int home_screen(int sel);          /* the module chosen, -1 to exit */
 int help_screen(void);             /* TRIANGLE on the home screen: the QR code and a short guide; 0 back, -1 exit */
+int quick_screen(void);            /* R1 on the home screen (quick.c): the short tests in one run; 0 back, -1 exit */
 void help_keep(void);              /* the QR text of the drive result to APP_DIR/compat.txt, for Help in a later session */
 
 /* modules */
@@ -53,7 +54,15 @@ int mod_mem_open(void);
 void mod_mem_report(void);
 int mod_net_open(void);
 void mod_net_report(void);
+void net_init(void);               /* the network's start, one journaled call, then the address (mod_net.c); every network test calls it */
+int net_is_up(void);               /* 1 once the start succeeded */
+int net_start_frozen(void);        /* 1 when the start froze this console before (or was skipped): no network call runs */
 void net_end(void);                /* leave(): the network's end, one journaled call; nothing when it never started */
+int mod_network_open(void);
+void mod_network_report(void);
+int mod_audio_open(void);
+void mod_audio_report(void);
+void audio_end(void);              /* leave() and the module's exit: the sound's end, one journaled call; nothing when it never started */
 int mod_cool_open(void);
 void mod_cool_report(void);
 
@@ -87,5 +96,28 @@ int spu_stuck(void);                     /* 1 once a group could not be stopped 
 int spu_wait_done(s64 us);               /* ls: 1 when the six reports have done = 1 within us */
 void spu_down(spu_result *r);            /* after spu_up returned 1: the end of the group, the reports into r */
 void spu_last_resort(void);              /* leave(): a group still up gets one more journaled terminate */
+
+/* The quick check (quick.c) runs each module's short test in one job: the
+ * *_quick functions run in the job thread (progress, job_cancel), the
+ * *_quick_end functions in the UI thread after it: they set the tile, and
+ * give the line of the verdict screen and its dot (DOT_*). */
+void drive_quick(void);
+int drive_quick_end(char *line, int n);
+int cool_quick_ask(void);          /* the fan prompt, once: 1 go on, -1 exit */
+void cool_quick(void);
+int cool_quick_end(char *line, int n);
+int mem_quick_ask(void);           /* the SPU prompt, once: 1 go on, -1 exit */
+void mem_quick(void);
+int mem_quick_end(char *line, int n);
+void network_quick(void);
+int network_quick_end(char *line, int n);
+
+/* The Cooling module's soak test borrows the Memory module's tests
+ * (mod_mem.c): one pattern p over n blocks of 1 MB, written then verified
+ * (the errors, the first wrong word's address in *first; stop ends it
+ * early), and the SPU local-store test once (1 when the six ended it, the
+ * wrong reads in *errors). */
+long mem_soak_pass(void *const *blocks, int n, int p, volatile int *stop, unsigned long *first);
+int mem_soak_ls(spu_result *r, unsigned *errors);
 
 #endif

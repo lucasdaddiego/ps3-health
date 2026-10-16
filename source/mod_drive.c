@@ -223,10 +223,17 @@ static void draw_summary(void)
     const ata_identity *i = &D.id;
     const dev_stats *ds = &D.ds;
     char h[48], dtext[256];
-    int nrows = 9 + (i->rotation == 1) + D.have_phy;
+    char eta[96];
+    int has_eta = m->life_left >= 0 && drive_life_eta(eta, sizeof eta);
+    int nrows = 9 + (i->rotation == 1) + D.have_phy + has_eta;
     float avail = BOTTOM - CT - 36 - 3 * 34 - 2 * 12;
+    int eta_row = has_eta && avail / nrows >= 32;   /* its own row where it fits, else short on the life row */
+    if (has_eta && !eta_row) {
+        nrows--;
+        eta[strcspn(eta, "(")] = 0;          /* "about 30 months to 0 % " */
+    }
     float step = avail / nrows;
-    step = step > 42 ? 42 : step < 32 ? 32 : step;
+    step = step > 42 ? 42 : step < 31 ? 31 : step;   /* 31: ten rows end inside the card at the smallest visible area */
     kv_x = MG + 300;
     kv_w = SW - MG - 32 - kv_x;
     card(MG, CT, SW - 2 * MG, BOTTOM - CT);
@@ -244,13 +251,19 @@ static void draw_summary(void)
      * firmware stores the remaining percent. So it is shown as a number, never
      * as a verdict, and never in red. */
     int eu = ds->have_ssd ? ds->endurance_used : -1;
-    if (m->life_left >= 0 && eu >= 0)
+    if (has_eta && !eta_row)
+        kv(y, "Life", m->life_left <= 10 ? RED : WHITE, "%d%% left (attribute %d), wear trend: %s", m->life_left, m->life_id, eta);
+    else if (m->life_left >= 0 && eu >= 0)
         kv(y, "Life", m->life_left <= 10 ? RED : WHITE, "%d%% left (attribute %d)    endurance indicator %d (device statistics)",
            m->life_left, m->life_id, eu);
     else if (m->life_left >= 0) kv(y, "Life", m->life_left <= 10 ? RED : WHITE, "%d%% left (attribute %d)", m->life_left, m->life_id);
     else if (eu >= 0) kv(y, "Life", GREY, "endurance indicator %d (device statistics; 0 = new, 100 = used up, some firmware inverts it)", eu);
     else kv(y, "Life", GREY, "no known attribute for this vendor");
     y += step;
+    if (eta_row) {                           /* trend.h: a straight line through the reads of trend.txt */
+        kv(y, "Wear trend", eta[0] == 'n' ? GREY : WHITE, "%s", eta);
+        y += step;
+    }
     if (ds->have_general && ds->sectors_written >= 0)
         kv(y, "Host writes", WHITE, "%.2f TB (device statistics, %lld sectors)%s", (double)ds->sectors_written * i->logical_size / 1e12,
            ds->sectors_written, m->writes_id && m->tb_written >= 0 ? "" : "    no vendor attribute");
@@ -388,6 +401,29 @@ static void trend_load(void)
         if (!e) break;
         p = e + 1;
     }
+}
+
+/* The estimate over trend.txt's reads and this session's read when the
+ * file does not have it yet (the report adds its line after this text). */
+int drive_life_eta(char *out, int n)
+{
+    static trend_rec all[TREND_MAX + 1];
+    trend_eta e;
+    if (!D.probed || D.demo || !D.ata_ok || !D.have_smart) return 0;
+    if (tr_seq != trend_seq) trend_load();
+    int k = tr_n;
+    memcpy(all, tr, sizeof tr[0] * (size_t)k);
+    if (D.trend_due) {
+        struct tm tm;
+        local_tm(&tm);
+        memset(&all[k], 0, sizeof all[k]);
+        all[k].year = tm.tm_year + 1900, all[k].month = tm.tm_mon + 1, all[k].day = tm.tm_mday;
+        all[k].hour = tm.tm_hour, all[k].minute = tm.tm_min;
+        all[k++].life = D.sum.life_left;
+    }
+    trend_life_eta(all, k, &e);
+    trend_eta_text(&e, out, n);
+    return 1;
 }
 
 /* Host writes in TB with the vendor's unit, else the bare raw value (the
@@ -912,22 +948,23 @@ static int run(void)
     }
 }
 
-/* The tile on the home screen: the model and the health line. Demo data is not kept. */
+/* The tile on the home screen: the health line, then the model (small, on
+ * up to two lines). Demo data is not kept. */
 static void drive_tile(void)
 {
-    char l1[48], l2[48], why[256], h[48];
+    char l1[48], l2[48], why[256];
     if (D.demo) return;
     if (!D.ata_ok || !D.have_smart) {
-        snprintf(l1, sizeof l1, "%.44s", D.have_identify ? D.id.model : "Drive not read");
-        snprintf(l2, sizeof l2, "%s", !D.opened ? "Open refused" : D.identify_frozen ? "IDENTIFY froze before"
+        snprintf(l1, sizeof l1, "%s", !D.opened ? "Open refused" : D.identify_frozen ? "IDENTIFY froze before"
                                        : !D.ata_ok ? "ATA commands refused" : "SMART not readable");
+        snprintf(l2, sizeof l2, "%.44s", D.have_identify ? D.id.model : "Drive not read");
         state_set("drive", DOT_WARN, l1, l2);
         return;
     }
     int hl = smart_health(&D.s, D.have_stlog ? &D.log : NULL, D.sum.temp_limit, why, sizeof why);
-    hours_text(D.sum.hours, h, sizeof h);
-    snprintf(l1, sizeof l1, "%.44s", D.id.model);
-    snprintf(l2, sizeof l2, "Health %s, %s", hl == HEALTH_OK ? "OK" : hl == HEALTH_WARN ? "WARN" : "FAIL", h);
+    if (D.sum.hours >= 0) snprintf(l1, sizeof l1, "Health %s, %d h", hl == HEALTH_OK ? "OK" : hl == HEALTH_WARN ? "WARN" : "FAIL", D.sum.hours);
+    else snprintf(l1, sizeof l1, "Health %s", hl == HEALTH_OK ? "OK" : hl == HEALTH_WARN ? "WARN" : "FAIL");
+    snprintf(l2, sizeof l2, "%.44s", D.id.model);
     state_set("drive", hl == HEALTH_OK ? DOT_OK : hl == HEALTH_WARN ? DOT_WARN : DOT_BAD, l1, l2);
 }
 
@@ -963,6 +1000,40 @@ int mod_drive_open(void)
         ui_demo = 0;
     } else help_keep();                      /* Help in a later session shows this result */
     return back;
+}
+
+/* ---- the quick check ----------------------------------------------------- */
+
+/* The drive's first read of the session, as CROSS on the start screen (no
+ * optional step: their prompts come in the module), else a new SMART read;
+ * then the console temperatures, as the module's open. No self-test. */
+void drive_quick(void)
+{
+    if (!D.ata_ok) {
+        drive_close(&D);
+        drive_load_prev(&D);
+        drive_probe(&D, progress);           /* it clears D, so the flag comes after it */
+        D.probed = 1;
+    } else {
+        progress("Reading SMART data");
+        drive_read_smart(&D, 1);
+    }
+    console_info(&D);
+}
+
+int drive_quick_end(char *line, int n)
+{
+    char why[256];
+    drive_tile();
+    help_keep();
+    if (!D.ata_ok || !D.have_smart) {
+        snprintf(line, n, "%s", !D.opened ? "the system refused to open the drive" : D.identify_frozen ? "IDENTIFY froze this console before"
+                                  : !D.ata_ok ? "ATA commands refused" : "SMART not readable");
+        return DOT_WARN;
+    }
+    int hl = smart_health(&D.s, D.have_stlog ? &D.log : NULL, D.sum.temp_limit, why, sizeof why);
+    snprintf(line, n, "Health %s: %s", hl == HEALTH_OK ? "OK" : hl == HEALTH_WARN ? "WARN" : "FAIL", why);
+    return hl == HEALTH_OK ? DOT_OK : hl == HEALTH_WARN ? DOT_WARN : DOT_BAD;
 }
 
 void mod_drive_report(void)

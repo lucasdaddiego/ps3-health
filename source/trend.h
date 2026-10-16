@@ -25,4 +25,24 @@ int trend_line(char *out, int n, const struct tm *when, const smart_data *s, con
  * range). One CR at the end is allowed. */
 int trend_parse(const char *line, trend_rec *rec);
 
+/* SSD life left as a time: a straight line through the life left of the
+ * reads (least squares over the days), once the reads span TREND_ETA_DAYS
+ * and life left dropped by a point or more from the first read to the last.
+ * The months to 0 % from the last read at that rate, at most TREND_ETA_CAP
+ * (then "over 10 years"). A rough guide: wear is not linear, and the life
+ * attribute counts in whole points. */
+#define TREND_ETA_DAYS 14
+#define TREND_ETA_CAP 120                    /* months */
+enum { TREND_ETA_OK, TREND_ETA_OVER, TREND_ETA_NO_LIFE, TREND_ETA_SHORT, TREND_ETA_NO_DROP, TREND_ETA_ZERO };
+typedef struct {
+    int state;                               /* TREND_ETA_* */
+    int months;                              /* OK: the months to 0 % */
+    int days, drop, reads;                   /* the days from the first read with a life value to the last, the points lost, those reads */
+} trend_eta;
+void trend_life_eta(const trend_rec *r, int n, trend_eta *e);
+/* The estimate, or why there is none, in one line: its length, as snprintf.
+ *     about 31 months to 0 % (3 points in 92 days)
+ *     no estimate yet: 9 days of reads, it needs 14 */
+int trend_eta_text(const trend_eta *e, char *out, int n);
+
 #endif

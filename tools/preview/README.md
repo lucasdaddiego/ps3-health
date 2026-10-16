@@ -48,8 +48,22 @@ thread that ended by itself, else LV2's ESTAT (0x8001000f); a thread that
 ended before a terminate keeps its status here, which no console round has
 checked yet.
 
+The audio port and the Network module's world are here too. `stub/audio/audio.h`
+stands in for PSL1GHT's `audio/audio.h` (the port config's two addresses are
+64-bit, a host pointer does not fit the console's 32-bit ones); `pv_app.c`
+answers the calls with a ring in host memory and a reader thread that moves
+the read index on the preview's clock, so the module's fill thread runs as on
+the console. The library's `net/netctl.h` has the address alone:
+`stub/pv_health.h` sets its include guard and declares netctl as PSL1GHT has
+it (the codes, the union), plus `SOCK_RAW` and `IPPROTO_ICMP`; `pv_app.c`
+defines `netCtlGetInfo`, the sockets of the ping (an ICMP echo answered after
+an IPv4 header, or a TCP connect refused by the router) and the DNS lookup,
+which replace the library's weak offline ones. The preview's clock moves by
+frames (1/60 s), so a ping takes whole frames: 16.7 ms, 33.3 ms. The layouts
+are what the scenarios check, not the times.
+
 The library's stubs have `sysModuleLoad` and no `sysModuleUnload`, which
-`net_end` calls: `stub/pv_health.h` declares it and `build.zsh` force-includes
+`net_end` and `audio_end` call: `stub/pv_health.h` declares it and `build.zsh` force-includes
 it (`-include`; a `stub/sysmodule/sysmodule.h` here would come after the
 library's on the include path), and `pv_app.c` defines it. The boot marks
 need one more: `sysLv2FsRename`, for the move to `boot.old.txt` at the cap,
@@ -89,3 +103,9 @@ adds:
 | `PV_SPU_STALL=i,n` | local store: SPU i stops after pass n, without its last report (the driver's stop at 5 s); heat: SPU i stops counting after n s (the load test's stop) |
 | `PV_HEAT_RATE=n` | heat: loops per microsecond per SPU (default 355, the design's estimate) |
 | `PV_LS_FAULT=i` | one bit stuck at 1 in one word of SPU i's local store |
+| `PV_AUDIO_CH=2` | the 8-channel audio port is refused: the module opens 2 channels |
+| `PV_WAV=file` | the audio blocks as the port reads them, raw 32-bit float, interleaved (`run.zsh audio` checks it for clicks and stale blocks) |
+| `PV_NET=wired` | netctl: `wired` (the default, 1000 Mbit/s full duplex), `wired100`, `wifi` (78 %, channel 6), `wifiweak` (31 %), `down` (no address) |
+| `PV_PING=n[,k]` | the router answers each ping after n frames, every kth lost; `none`: no answer. Unset: no socket, offline |
+| `PV_ICMP=refuse` | the raw socket is refused: the ping times TCP connects |
+| `PV_DNS_MS=n` | a DNS lookup answers after n ms; unset: it fails, offline |

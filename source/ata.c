@@ -604,7 +604,10 @@ static int compat_field(const drive_state *d, const char *id, char *out, int n)
     return j;
 }
 
-/* The same four fields as text, for the report and the QR code on Help. */
+/* The same four fields as text, for the report and the QR code on Help,
+ * then the Cooling line once a load test ran in this session (the console
+ * family and the temperatures, no identifier): its readings help to set the
+ * paste verdict's ranges. */
 int compat_body(const drive_state *d, char *out, int n)
 {
     static const char *ids[] = {"firmware", "drive", "result", "health"};
@@ -615,6 +618,7 @@ int compat_body(const drive_state *d, char *out, int n)
         compat_field(d, ids[k], v, sizeof v);
         j = app(out, n, j, "%s: %s\n", ids[k], v);
     }
+    if (cool_compat(v, sizeof v) > 0) j = app(out, n, j, "cooling: %s\n", v);
     return j;
 }
 
@@ -715,8 +719,11 @@ void drive_report(drive_state *d, const char *when)
         char ht[48], dtext[512];
         hours_text(d->sum.hours, ht, sizeof ht);
         rep_out("\npower-on %s, power cycles %d\n", ht, d->sum.cycles);
-        if (d->sum.life_left >= 0) rep_out("life left %d%% (attribute %d)\n", d->sum.life_left, d->sum.life_id);
-        else rep_out("life left: no known attribute for this vendor\n");
+        if (d->sum.life_left >= 0) {
+            char eta[96];
+            rep_out("life left %d%% (attribute %d)\n", d->sum.life_left, d->sum.life_id);
+            if (drive_life_eta(eta, sizeof eta)) rep_out("wear trend: %s\n", eta);   /* trend.txt's reads and this one */
+        } else rep_out("life left: no known attribute for this vendor\n");
         if (d->sum.writes_id && d->sum.tb_written >= 0)
             rep_out("host writes %.2f TB (attribute %d raw %llu, %s)\n", d->sum.tb_written, d->sum.writes_id,
                 (unsigned long long)d->sum.writes_raw, writes_unit_text(d->sum.writes_unit));

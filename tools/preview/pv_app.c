@@ -1,7 +1,8 @@
 /* PS3 Health's part of the preview: the drive from a console's dumps, 383 and
- * 409 (PV_DRIVE, PV_ST, PV_RISE, PV_TEMP_OFF, PV_383_RC, PV_383_FAIL_AT), and
- * the six SPUs of the SPU kit (PV_SPU_FAIL, PV_SPU_LATE, PV_SPU_STALL,
- * PV_LS_FAULT, PV_HEAT_RATE): README.md. */
+ * 409 (PV_DRIVE, PV_ST, PV_RISE, PV_TEMP_OFF, PV_383_RC, PV_383_FAIL_AT), the
+ * six SPUs of the SPU kit (PV_SPU_FAIL, PV_SPU_LATE, PV_SPU_STALL,
+ * PV_LS_FAULT, PV_HEAT_RATE), the audio port (PV_AUDIO_CH, PV_WAV) and the
+ * Network module's world (PV_NET, PV_PING, PV_ICMP, PV_DNS_MS): README.md. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,9 +10,13 @@
 #include <pthread.h>
 #include <sched.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "lv2/systime.h"
 #include "ppu-lv2.h"
 #include "sys/spu.h"
+#include "audio/audio.h"
+#include "net/net.h"
+#include "net/netctl.h"
 
 /* PV_LS_FAULT: one bit stuck at 1 in one word of one SPU's local store. The
  * kit's kernel writes through SPU_KIT_WR, defined here before the include. */
@@ -300,4 +305,217 @@ s32 sysLv2FsRename(const char *from, const char *to)
     snprintf(b, sizeof b, "%s%s", root, to);
     if (stat(b, &st) == 0) return (s32)0x80010014;                   /* EEXIST */
     return rename(a, b) ? (s32)0x80010006 : 0;
+}
+
+/* ---- the audio port ------------------------------------------------------- */
+
+/* One port: its ring in host memory and a reader thread that moves the read
+ * index on the preview's clock, a block of 256 samples every 5333 us.
+ * PV_AUDIO_CH=2: the 8-channel open is refused, as a console whose system
+ * gives two. PV_WAV=<file>: the blocks as the reader passes them, raw 32-bit
+ * float, interleaved: a fill that falls behind shows as a repeated block. */
+static float aring[AUDIO_BLOCK_32 * 8 * AUDIO_BLOCK_SAMPLES];
+static volatile u64 aread;
+static int a_ch, a_blocks;
+static pthread_t a_th;
+static volatile int a_stop, a_on;
+
+static void *audio_reader(void *unused)
+{
+    (void)unused;
+    u64 t0 = sysGetSystemTime(), done = 0;
+    FILE *wav = getenv("PV_WAV") ? fopen(getenv("PV_WAV"), "wb") : NULL;
+    while (!a_stop) {
+        u64 b = (sysGetSystemTime() - t0) * 48000 / 1000000 / AUDIO_BLOCK_SAMPLES;
+        for (; done < b; done++) {
+            if (wav) fwrite(&aring[(done % a_blocks) * a_ch * AUDIO_BLOCK_SAMPLES], sizeof(float), (size_t)a_ch * AUDIO_BLOCK_SAMPLES, wav);
+            aread = (done + 1) % a_blocks;
+        }
+        usleep(200);
+    }
+    if (wav) fclose(wav);
+    return NULL;
+}
+
+s32 audioInit(void) { return 0; }
+s32 audioQuit(void) { return 0; }
+
+s32 audioPortOpen(audioPortParam *p, u32 *port)
+{
+    if (p->numChannels == 8 && env_int("PV_AUDIO_CH", 8) == 2) return (s32)0x80310705;   /* refused: the 2-channel open follows */
+    if ((p->numChannels != 2 && p->numChannels != 8) || p->numBlocks > AUDIO_BLOCK_32) return (s32)0x80310704;
+    a_ch = (int)p->numChannels;
+    a_blocks = (int)p->numBlocks;
+    *port = 1;
+    return 0;
+}
+
+s32 audioGetPortConfig(u32 port, audioPortConfig *c)
+{
+    (void)port;
+    memset(c, 0, sizeof *c);
+    c->readIndex = (u64)(uintptr_t)&aread;
+    c->status = a_on ? AUDIO_STATUS_RUN : AUDIO_STATUS_READY;
+    c->channelCount = (u64)a_ch;
+    c->numBlocks = (u64)a_blocks;
+    c->portSize = (u32)(a_ch * a_blocks * AUDIO_BLOCK_SAMPLES * 4);
+    c->audioDataStart = (u64)(uintptr_t)aring;
+    return 0;
+}
+
+s32 audioPortStart(u32 port)
+{
+    (void)port;
+    a_stop = 0;
+    aread = 0;
+    a_on = pthread_create(&a_th, NULL, audio_reader, NULL) == 0;
+    return 0;
+}
+
+s32 audioPortStop(u32 port)
+{
+    (void)port;
+    if (a_on) {
+        a_stop = 1;
+        pthread_join(a_th, NULL);
+        a_on = 0;
+    }
+    return 0;
+}
+
+s32 audioPortClose(u32 port)
+{
+    (void)port;
+    return 0;
+}
+
+/* ---- the Network module's world -------------------------------------------- */
+
+/* netctl as PV_NET sets it: wired (the default: 1000 Mbit/s full duplex),
+ * wired100, wifi (signal 78 % on channel 6), wifiweak (31 %), down (no
+ * address). The MAC address is never asked: its code is refused. */
+s32 netCtlGetInfo(s32 code, union net_ctl_info *i)
+{
+    const char *m = getenv("PV_NET") ? getenv("PV_NET") : "wired";
+    int wifi = !strncmp(m, "wifi", 4), down = !strcmp(m, "down");
+    memset(i, 0, sizeof *i);
+    switch (code) {
+    case NET_CTL_INFO_DEVICE: i->device = wifi ? NET_CTL_DEVICE_WIRELESS : NET_CTL_DEVICE_WIRED; return 0;
+    case NET_CTL_INFO_LINK: i->link = down ? NET_CTL_LINK_DISCONNECTED : NET_CTL_LINK_CONNECTED; return 0;
+    case NET_CTL_INFO_LINK_TYPE: i->link_type = wifi ? 0 : !strcmp(m, "wired100") ? 4 : 6; return 0;
+    case NET_CTL_INFO_MTU: i->mtu = 1500; return 0;
+    case NET_CTL_INFO_RSSI: if (!wifi) return (s32)0x80130106; i->rssi = !strcmp(m, "wifiweak") ? 31 : 78; return 0;
+    case NET_CTL_INFO_CHANNEL: if (!wifi) return (s32)0x80130106; i->channel = 6; return 0;
+    case NET_CTL_INFO_IP_CONFIG: i->ip_config = NET_CTL_IP_DHCP; return 0;
+    case NET_CTL_INFO_IP_ADDRESS: snprintf(i->ip_address, sizeof i->ip_address, "%s", down ? "0.0.0.0" : "192.168.1.20"); return 0;
+    case NET_CTL_INFO_NETMASK: snprintf(i->netmask, sizeof i->netmask, "255.255.255.0"); return 0;
+    case NET_CTL_INFO_DEFAULT_ROUTE: if (!down) snprintf(i->default_route, sizeof i->default_route, "192.168.1.1"); return 0;
+    case NET_CTL_INFO_PRIMARY_DNS: snprintf(i->primary_dns, sizeof i->primary_dns, "192.168.1.1"); return 0;
+    case NET_CTL_INFO_SECONDARY_DNS: snprintf(i->secondary_dns, sizeof i->secondary_dns, "1.1.1.1"); return 0;
+    }
+    return (s32)0x80130106;                  /* NET_CTL_ERROR_INVALID_CODE */
+}
+
+/* The router: PV_PING=frames[,n] answers each ping after that many frames
+ * of the preview's clock (16.7 ms each: the clock moves by frames, so the
+ * times are frame steps), every nth lost; PV_PING=none answers nothing.
+ * PV_ICMP=refuse: the raw socket is refused, so the module times TCP
+ * connects (refused at once by the router, as a closed port 80). No PV_PING:
+ * offline, as the library's world. PV_DNS_MS=n: a lookup answers after n ms
+ * (no PV_DNS_MS: it fails, offline). */
+#define FD_RAW 0x701
+#define FD_TCP 0x702
+static s32 pv_errno = NET_ENETDOWN;
+static u64 sent_at;
+static int pings;
+static uint8_t last_req[64];
+static int last_len;
+
+s32 *netErrnoLoc(void) { return &pv_errno; }
+
+static int ping_frames(void) { return getenv("PV_PING") ? atoi(getenv("PV_PING")) : 0; }
+static int ping_lost(void)
+{
+    const char *p = getenv("PV_PING"), *c = p ? strchr(p, ',') : NULL;
+    if (p && !strcmp(p, "none")) return 1;
+    int every = c ? atoi(c + 1) : 0;
+    return every > 0 && pings % every == 0;
+}
+static void wait_until(u64 t) { while (sysGetSystemTime() < t) usleep(200); }
+
+s32 netSocket(s32 d, s32 t, s32 p)
+{
+    (void)d; (void)p;
+    if (!getenv("PV_PING")) { pv_errno = NET_ENETDOWN; return -1; }
+    if (t == SOCK_RAW) {
+        if (getenv("PV_ICMP") && !strcmp(getenv("PV_ICMP"), "refuse")) { pv_errno = NET_EPROTONOSUPPORT; return -1; }
+        return FD_RAW;
+    }
+    return t == SOCK_STREAM ? FD_TCP : -1;
+}
+
+ssize_t netSendTo(s32 s, const void *b, size_t l, s32 f, const struct sockaddr *a, socklen_t al)
+{
+    (void)f; (void)a; (void)al;
+    if (s != FD_RAW || l > sizeof last_req) return -1;
+    memcpy(last_req, b, l);
+    last_len = (int)l;
+    sent_at = sysGetSystemTime();
+    pings++;
+    return (ssize_t)l;
+}
+
+/* The reply after an IPv4 header, as a BSD raw socket gives it, once the
+ * poll said it came. */
+ssize_t netRecvFrom(s32 s, void *b, size_t l, s32 f, struct sockaddr *from, socklen_t *fl)
+{
+    (void)f; (void)from; (void)fl;
+    if (s != FD_RAW || l < (size_t)(20 + last_len) || ping_lost()) { pv_errno = NET_EAGAIN; return -1; }
+    wait_until(sent_at + (u64)ping_frames() * 16667);
+    uint8_t *o = b;
+    memset(o, 0, 20);
+    o[0] = 0x45;
+    o[9] = 1;
+    memcpy(o + 20, last_req, (size_t)last_len);
+    o[20] = 0;                               /* echo reply */
+    return 20 + last_len;
+}
+
+s32 netConnect(s32 s, const struct sockaddr *a, socklen_t l)
+{
+    (void)a; (void)l;
+    if (s != FD_TCP) return -1;
+    sent_at = sysGetSystemTime();
+    pings++;
+    pv_errno = NET_EINPROGRESS;
+    return -1;
+}
+
+/* The answer of the ping on either socket after its frames; a lost one at
+ * the poll's timeout. */
+s32 netPoll(struct pollfd *p, nfds_t n, s32 timeout)
+{
+    (void)n;
+    if (p->fd != FD_TCP && p->fd != FD_RAW) return -1;
+    if (ping_lost()) { wait_until(sysGetSystemTime() + (u64)timeout * 1000); return 0; }
+    wait_until(sent_at + (u64)ping_frames() * 16667);
+    p->revents = p->fd == FD_TCP ? POLLOUT : POLLIN;
+    return 1;
+}
+
+s32 netGetSockOpt(s32 s, s32 lv, s32 o, void *v, socklen_t *l)
+{
+    (void)lv; (void)l;
+    if (s != FD_TCP || o != SO_ERROR) return -1;
+    *(int *)v = NET_ECONNREFUSED;            /* port 80 closed: the router's RST is the answer */
+    return 0;
+}
+
+struct net_hostent *netGetHostByName(const char *name)
+{
+    static struct net_hostent he = {0, 0, 2, 4, 1};   /* only the answer counts: the address list is never read */
+    (void)name;
+    if (!getenv("PV_DNS_MS")) return NULL;
+    wait_until(sysGetSystemTime() + (u64)atoi(getenv("PV_DNS_MS")) * 1000);
+    return &he;
 }
