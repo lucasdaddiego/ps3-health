@@ -248,7 +248,7 @@ and the screen says so. The ranges are provisional, in one table in
 |---|---|---|---|---|
 | Fat | 62 C | 74 C | 14 C | 70 % |
 | Slim | 56 C | 72 C | 12 C | 60 % |
-| Super slim | 58 C | 72 C | 12 C | 60 % |
+| Super slim | 62 C | 72 C | 12 C | 60 % |
 
 The super slim row comes from one console (the author's, with a margin); the
 fat and slim rows are guesses from the chips' generations, not measured. The

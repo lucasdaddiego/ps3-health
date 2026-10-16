@@ -5,7 +5,8 @@
 
 /* The ranges are provisional. The super slim row comes from one console, the
  * author's CECH-4004 (2.0.0 load test, 2 minutes: Cell 51 to 67 C, RSX 55 to
- * 71 C, fan 33 to 49 %, with a margin). The fat and slim rows are guesses
+ * 71 C, fan 33 to 49 %, with a margin; idle 56 to 61 C over the 2.0.x to
+ * 2.2.0 tests, 61 C when a test starts right after another one). The fat and slim rows are guesses
  * from the chips' generations: the 90 and 65 nm fat consoles run hotter than
  * the 45 and 40 nm slims. No fat or slim console was measured. The compat
  * report carries the Cooling summary so that real readings can replace
@@ -13,7 +14,7 @@
 static const heat_family families[] = {
     {"fat", "Fat", "CECHA to CECHQ", 62, 74, 14, 70},
     {"slim", "Slim", "CECH-20xx to 30xx", 56, 72, 12, 60},
-    {"superslim", "Super slim", "CECH-40xx", 58, 72, 12, 60},
+    {"superslim", "Super slim", "CECH-40xx", 62, 72, 12, 60},
 };
 
 const heat_family *heat_family_get(int family)

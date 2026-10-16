@@ -437,7 +437,9 @@ int main(void)
         CHECK(p.verdict == PASTE_OK && p.over == 0 && p.measured == 4);
         heat_paste_judge(FAMILY_SUPER, 55, 74, 11, 49, &p);
         CHECK(p.verdict == PASTE_CHECK && p.over == 2);
-        heat_paste_judge(FAMILY_SUPER, 60, 74, 15, -1, &p);   /* no fan read: three values still judge */
+        heat_paste_judge(FAMILY_SUPER, 61, 71, 6, 25, &p);    /* a warm start: idle 61, peak 71 as in 2.2.0-rc1's soak */
+        CHECK(p.verdict == PASTE_OK && p.over == 0);
+        heat_paste_judge(FAMILY_SUPER, 64, 74, 15, -1, &p);   /* no fan read: three values still judge */
         CHECK(p.verdict == PASTE_LIKELY && p.over == 7 && p.measured == 3);
         heat_paste_judge(FAMILY_SUPER, 55, 70, -1, -1, &p);   /* under a minute */
         CHECK(p.verdict == PASTE_NONE && strstr(heat_paste_text(&p), "a minute"));
