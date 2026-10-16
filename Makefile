@@ -36,6 +36,10 @@ CXXFLAGS	=	$(CFLAGS)
 
 LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
 
+# qrcodegen's asserts would put this folder's path into the ELF (__FILE__;
+# gcc 7.2 has no -fmacro-prefix-map): its object is built without them
+qrcodegen.o: CFLAGS += -DNDEBUG
+
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project: ps3gfx first, GNU ld resolves left to right
 #---------------------------------------------------------------------------------
