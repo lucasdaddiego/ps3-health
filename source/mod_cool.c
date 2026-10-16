@@ -74,6 +74,8 @@ static void family_load(void)
     family = heat_family_parse(t);
 }
 
+static void judge_paste(void);
+
 static void family_save(int f)
 {
     const heat_family *h = heat_family_get(f);
@@ -81,6 +83,7 @@ static void family_save(int f)
     int n = snprintf(t, sizeof t, "%s\n", h ? h->key : "unknown");
     family = f;
     fs_write_file(FAMILY_FILE, t, (u64)n, 0);   /* a failed write: the answer holds for this session */
+    if (load.done) judge_paste();
 }
 
 static const char *family_name(void)
@@ -295,6 +298,16 @@ static void start_test(int seconds, int soak)
     load.fan0 = fan_pct;
 }
 
+/* The paste estimate of the last test, for the family now set: at the
+ * test's end, and again when L1 changes the family after it. */
+static void judge_paste(void)
+{
+    int idle = load.cpu0 > load.rsx0 ? load.cpu0 : load.rsx0, peak = load.cpu_max > load.rsx_max ? load.cpu_max : load.rsx_max;
+    int rc = heat_rise(load.cpu, load.n, load.step), rr = heat_rise(load.rsx, load.n, load.step);
+    if (spu.stuck || load.stop == STOP_READ) rc = rr = -1;   /* no estimate on readings the test could not finish */
+    heat_paste_judge(family, idle, peak, rc > rr ? rc : rr, load.fan_end, &paste);
+}
+
 /* The end of every test: the maxima, the fan, the time, the paste estimate. */
 static void end_test(s64 t0)
 {
@@ -306,10 +319,7 @@ static void end_test(s64 t0)
     load.fan_end = fan_pct;
     load.seconds = (int)((sysGetSystemTime() - t0) / 1000000);
     load.done = 1;
-    int idle = load.cpu0 > load.rsx0 ? load.cpu0 : load.rsx0, peak = load.cpu_max > load.rsx_max ? load.cpu_max : load.rsx_max;
-    int rc = heat_rise(load.cpu, load.n, load.step), rr = heat_rise(load.rsx, load.n, load.step);
-    if (spu.stuck || load.stop == STOP_READ) rc = rr = -1;   /* no estimate on readings the test could not finish */
-    heat_paste_judge(family, idle, peak, rc > rr ? rc : rr, load.fan_end, &paste);
+    judge_paste();
     pressed = 0;                             /* a button still down is not a new press */
     write_report();
 }
