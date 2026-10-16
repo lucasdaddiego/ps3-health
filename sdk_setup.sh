@@ -54,7 +54,7 @@ print "$PS3DEV: runtime PSL1GHT 6e565a7 (2020)"
 # builds against the same sources, then its make install into portlibs/ppu (the
 # archive, the <ps3gfx/*.h> headers, OFL.txt and the COMMIT stamp that build.sh
 # checks). This script is sourced in the console loop: no $0, return not exit.
-PS3GFX_REV=3ea00e16e8da4780b05911f007c9e631ac724d82   # ps3gfx main, 2026-10-15: the journal reads its whole history, fs reports fsync and close errors (Health's ELF changes); 2026-10-14: bilinear icons at every size, crisper spu_fx clouds; the anti-aliased line helpers; 2026-10-13: Couch 0.3.0's additions (the display digits, the Phosphor icons, fx.h, the effects program spu_fx), after the SPU kit; Health's ELF byte-identical
+PS3GFX_REV=67bf10fb61afe6a72e479ccf7ea16588b7a4a2ef   # ps3gfx main, 2026-10-16: ui_init times its steps (ui_init_us; Health's ELF changes); 2026-10-15: the journal reads its whole history, fs reports fsync and close errors (Health's ELF changes); 2026-10-14: bilinear icons at every size, crisper spu_fx clouds; the anti-aliased line helpers; 2026-10-13: Couch 0.3.0's additions (the display digits, the Phosphor icons, fx.h, the effects program spu_fx), after the SPU kit; Health's ELF byte-identical
 src=$PS3DEV/src/ps3gfx; rm -rf $src
 from=https://github.com/lucasdaddiego/ps3gfx; [[ -n $PS3DEV_ARCHIVE ]] && from=$PS3DEV_ARCHIVE/src/ps3gfx.bundle
 git clone -q $from $src && git -C $src checkout -q $PS3GFX_REV
