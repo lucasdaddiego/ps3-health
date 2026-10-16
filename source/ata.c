@@ -179,7 +179,11 @@ void drive_probe(drive_state *d, void (*progress)(const char *msg))
         return;
     }
     progress("IDENTIFY DEVICE (syscall 616)");
-    journal_start("identify");
+    if (!journal_start("identify")) {
+        d->identify_rc = 0x7FFFFFFF;
+        snprintf(d->identify_note, sizeof d->identify_note, "journal refused");
+        return;
+    }
     d->identify_rc = ata_command(d, 0, 1, 0, 0xEC, PROTO_PIO_IN, 512);
     d->ata_ok = d->identify_rc == 0 && identify_ok(d);
     if (d->identify_rc) snprintf(d->identify_note, sizeof d->identify_note, "refused");
@@ -327,8 +331,8 @@ int fan_policy_read(int *percent, int *mode)
     return rc;
 }
 
-/* Writes a 64 MB file (64 000 000 bytes) in APP_DIR in 1 MB pieces, reads it
- * back, deletes it.
+/* Writes a new 64 MB file (64 000 000 bytes) in dir in 1 MB pieces, reads it
+ * back, deletes it. Existing files are never opened for writing or removed.
  * Both go through the LV2 file system, the path games use for their data, so
  * no new syscall. (Raw sector reads, syscall 602, come back ENXIO on HEN.) */
 int file_speed_test(const char *dir, const char *jname, double *mb, double *wsec, double *rsec)
@@ -336,19 +340,30 @@ int file_speed_test(const char *dir, const char *jname, double *mb, double *wsec
     static uint8_t sbuf[1000000] __attribute__((aligned(128)));   /* 64 x 1 MB = 64 MB, as shown */
     const int pieces = 64;
     char p[128];
-    snprintf(p, sizeof p, "%s/speed.tmp", dir);
     if (!journal_start(jname)) return -1;
     for (unsigned i = 0; i < sizeof sbuf; i += 4) *(uint32_t *)(sbuf + i) = i * 2654435761u;
     s32 fd = -1, rc;
     u64 n = 0, t0 = 0, n0 = 0, t1 = 0, n1 = 0, t2 = 0, n2 = 0;
     *mb = (double)pieces * sizeof sbuf / 1e6;
     sysGetCurrentTime(&t0, &n0);
-    rc = sysLv2FsOpen(p, SYS_O_WRONLY | SYS_O_CREAT | SYS_O_TRUNC, &fd, 0666, NULL, 0);
+    rc = -1;
+    for (unsigned attempt = 0; attempt < 16; attempt++) {
+        int len = snprintf(p, sizeof p, "%s/ps3-health-speed-%llx-%llx-%u.tmp", dir,
+                           (unsigned long long)t0, (unsigned long long)n0, attempt);
+        if (len < 0 || len >= (int)sizeof p) break;
+        rc = sysLv2FsOpen(p, SYS_O_WRONLY | SYS_O_CREAT | SYS_O_EXCL, &fd, 0666, NULL, 0);
+        if (rc != (s32)0x80010014) break;     /* EEXIST: try another name */
+    }
+    int created = rc == 0;
     for (int k = 0; rc == 0 && k < pieces; k++) {
         rc = sysLv2FsWrite(fd, sbuf, sizeof sbuf, &n);
         if (rc == 0 && n != sizeof sbuf) rc = -1;
     }
-    if (fd >= 0) { sysLv2FsFsync(fd); sysLv2FsClose(fd); fd = -1; }
+    if (fd >= 0) {
+        s32 sync_rc = sysLv2FsFsync(fd), close_rc = sysLv2FsClose(fd);
+        if (rc == 0) rc = sync_rc ? sync_rc : close_rc;
+        fd = -1;
+    }
     sysGetCurrentTime(&t1, &n1);
     if (rc == 0) rc = sysLv2FsOpen(p, SYS_O_RDONLY, &fd, 0, NULL, 0);
     for (int k = 0; rc == 0 && k < pieces; k++) {
@@ -357,7 +372,10 @@ int file_speed_test(const char *dir, const char *jname, double *mb, double *wsec
     }
     if (fd >= 0) sysLv2FsClose(fd);
     sysGetCurrentTime(&t2, &n2);
-    sysLv2FsUnlink(p);
+    if (created) {
+        s32 unlink_rc = sysLv2FsUnlink(p);
+        if (rc == 0) rc = unlink_rc;
+    }
     *wsec = (double)(t1 - t0) + (double)((s64)n1 - (s64)n0) / 1e9;
     *rsec = (double)(t2 - t1) + (double)((s64)n2 - (s64)n1) / 1e9;
     journal_done(jname, rc, rc == 0);

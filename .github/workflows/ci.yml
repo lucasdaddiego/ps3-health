@@ -30,6 +30,9 @@ jobs:
           cc -std=c99 -Wall -Wextra -Werror -o test_smart test/test_smart.c source/smart.c source/vendor.c source/trend.c source/compat.c source/qrcodegen.c
           ./test_smart
 
+      - name: Speed test preserves existing files and handles I/O failures
+        run: python3 -I test/test_speed.py
+
       - name: Python scripts compile, verify_self.py --help
         run: |
           python3 -I -m py_compile verify_self.py tools/syscalls.py art/make_art.py

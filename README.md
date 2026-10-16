@@ -376,11 +376,13 @@ the screen shows a seconds counter: a counter that stops is a frozen console.
 After a forced power-off, let the console check its file system at boot if it
 offers to, and never choose "Restore PS3 System".
 
-The app reads only the last 32 KB of the journal, so a long session cannot hide
-the newest entry. A `skip` line records a command you declined at its first-run
-prompt. To try a skipped or frozen call again (for example after a firmware
-change), press SQUARE twice on the home screen: the journal is emptied, and the
-next start asks or runs every call again.
+The app reads the complete journal with bounded memory, so older frozen and
+skipped calls remain blocked after long sessions. Journal records stay
+append-only until you explicitly clear them. If a record cannot be written or
+synced, the call still runs, but a freeze during it may go unrecorded. A `skip` line records a command you
+declined at its first-run prompt. To try a skipped or frozen call again (for
+example after a firmware change), press SQUARE twice on the home screen: the
+journal is emptied, and the next start asks or runs every call again.
 
 ## SSD in a PS3: no TRIM
 
