@@ -78,17 +78,33 @@ temperatures, the SPU rates, the sticks and the memory size are simulated.
 
 The app was tested on one console: a PS3 Super Slim on **HFW 4.93 with PS3HEN
 3.6.0** and a Dahua V800 1 TB SATA SSD. The table lists the versions tested on
-the console. 2.2.1 is 2.2.0 on ps3gfx cb788b4, the library's fixes of
-2026-10-17: a two-press button (SQUARE twice, R2 twice) fires only on its own
-button and any other button cancels it, a controller that goes away releases
-its buttons, and the freeze journal writes a failed record once more. The app
-drops its own resets of a two-press button, which the library now makes, and
-does less work per frame for the Controller's stick shapes, the Cooling curves
-and the wear trend line. Three fixes of its own: the USB copy takes the whole
-freeze journal (it kept the first 32 KB, the oldest records, since the
-journal became append-only), the sweep's "Done" belongs to the sound that
-plays (a fill that raced a new sound could show it at the start), and the
-SATA phy log's size code 0 ends the list without an undefined shift.
+the console. 2.2.1 is 2.2.0 on ps3gfx 57b2eb0, the library's fixes of its
+two reviews of 2026-10-17: a two-press button (SQUARE twice, R2 twice) fires
+only on its own button and any other button cancels it, a controller that
+goes away releases its buttons, the freeze journal writes a failed record
+once more, a job reads the pad in every frame (a button held through a job is
+no new press after it), the visible area screen waits for a new press of an
+arrow held when it opens, and the fonts' texels are white also at alpha 0
+(text at 720p and 480p is brighter at its edges; 1080p keeps its pixels). The
+app drops its own resets of a two-press button, which the library now makes,
+and does less work per frame for the Controller's stick shapes, the Cooling
+curves and the wear trend line. Five fixes of its own: the USB copy takes the
+whole freeze journal (it kept the first 32 KB, the oldest records, since the
+journal became append-only) and removes the stick's `journal.txt` when the
+console's is empty or missing, as it does `trend.txt`; the sweep's "Done"
+belongs to the sound that plays (a fill that raced a new sound could show it
+at the start); the SATA phy log's size code 0 ends the list without an
+undefined shift, a counter's value is 2 bytes per size code, 1 to 4 (as
+smartmontools reads it: a 48-bit counter put every later one out of step, a
+64-bit one ended the list), and a vendor counter (bit 15) stays apart from
+the standard ids (a vendor 0x8001 overwrote the ICRC count); a model that
+starts with MK is Toshiba only with a digit after it (MK1655GSX; Mushkin's
+MKNSSD drives got the Toshiba table, whose attribute 241 counts 512-byte
+LBAs, where a SandForce Mushkin counts GiB); and the quick check's verdict is
+"Stopped" only when a step did not run (CIRCLE in the last step gave the grey
+"Stopped" and hid "Not run: Network"). `build.sh` builds the host test with
+`-Werror` and runs the speed test's file check, as CI does, and dead code and
+the second copies of two text helpers are gone.
 
 It is **not tested** on CFW (Evilnat, Rebug and others), on fat or slim models, on
 other firmware versions, or on original HDDs. On another setup, a drive command
@@ -146,8 +162,9 @@ home, START exits. R1 runs the quick check (below). TRIANGLE opens Help: the QR 
 report (it opens a prefilled GitHub issue on a phone; nothing is sent until
 you submit it) and a short guide. SELECT copies the report, `journal.txt` and
 `trend.txt` to the first USB stick found, into `ps3_health/`. When the console
-has no `trend.txt` yet (or an empty one), the copy removes the one on the
-stick, so the folder holds no trend of another console. The copy is journaled:
+has no `journal.txt` or `trend.txt` (or an empty one, as the journal after
+SQUARE twice), the copy removes the one on the stick, so the folder holds no
+journal or trend of another console. The copy is journaled:
 after a freeze inside it, SELECT copies nothing until the journal is cleared.
 SQUARE twice clears the freeze journal (see Safety). The button line at the
 bottom of each screen shows the controller's own symbols.
@@ -168,7 +185,8 @@ each with the module's own code and journal entries:
 
 A first-run prompt that was never answered (the fan, the SPUs) comes before
 the run. The steps run behind a counter; CIRCLE stops after the step that
-runs (that step runs to its end), and the rest show "not run". One verdict
+runs (that step runs to its end), and the rest show "not run". CIRCLE during
+the last step skips nothing: the verdict is the normal one. One verdict
 screen lists each step with its dot and result, and each module's tile changes
 as after a normal run (one write of `state.txt` for all four). The whole check
 takes under a minute (under 30 s on the author's console). Without a writable
@@ -349,8 +367,9 @@ CIRCLE not heard; TRIANGLE stops the test.
 
 The app opens one port of the system's audio library: eight channels at
 48 kHz when the system gives them, else two (then no walk, and the screen says
-so). A thread keeps the port's ring of 16 blocks about 43 ms ahead. The start
-(the audio module, the library, the port) is one journaled call at the first
+so). A thread keeps the port's ring of 16 blocks filled 7 blocks (about
+37 ms) ahead of the read. The start (the audio module, the library, the
+port) is one journaled call at the first
 test, behind the counter; the end (the port stop and close, the library, the
 module unload) is another, at every way out of the module and once more at the
 exit. Before the end the sound that plays fades out in 40 ms and the port
@@ -681,7 +700,7 @@ QR encoder.
   `~/.local` packages, so install them into a venv and point `PYTHON` at it:
   `python3 -m venv ~/.local/share/ps3dev/venv && ~/.local/share/ps3dev/venv/bin/pip install pycryptodome Pillow`,
   then `PYTHON=~/.local/share/ps3dev/venv/bin/python3 ./build.sh`.
-- The key file for `verify_self.py` (step 3 below). Without it, `make pkg` still
+- The key file for `verify_self.py` (step 5 below). Without it, `make pkg` still
   builds the pkg, and only the check is missing.
 
 ```zsh
@@ -701,7 +720,10 @@ checked) with `curl` if `~/ps3dev` is missing. Then it builds PSL1GHT `6e565a7`
 clones ps3gfx into `~/ps3dev/src/ps3gfx` at the commit `PS3GFX_REV` pins (the
 full id, in the script) and runs its `make install`, which puts `libps3gfx.a`,
 the `<ps3gfx/*.h>` headers, `OFL.txt` and a `COMMIT` stamp into the bundle's
-`portlibs/ppu`: the only thing the app uses from there. One `~/ps3dev` serves
+`portlibs/ppu`: the only thing the app uses from there. A step whose stamp
+already names its pin is skipped (`~/ps3dev/.runtime-2020` for PSL1GHT; for
+ps3gfx the `COMMIT` stamp and a clone at that commit), so a run on a finished
+`~/ps3dev` clones, builds and installs nothing. One `~/ps3dev` serves
 every app on the library and the last install wins, so `build.sh` first checks
 that the archive is there and that its `COMMIT` equals the pin (`PS3GFX_DEV=1`
 skips the stamp check, for a build against a working clone installed by hand).
@@ -709,16 +731,19 @@ Then `build.sh`:
 1. runs the host unit test (`test/test_smart.c`: the decoders, the vendor table,
    the summary, the delta, the trend lines and the wear trend, the issue link,
    a QR encode, the paste estimate, the ping statistics and the tones) on the
-   Mac;
-2. runs `make pkg`;
-3. runs `python3 -I tools/syscalls.py build/ps3_health.elf`: it lists the LV2
+   Mac, built with `-Werror`;
+2. runs `python3 -I test/test_speed.py`: the speed test's file handling
+   (`file_speed_test` of `source/ata.c`) against the host's file calls, also
+   under AddressSanitizer and UndefinedBehaviorSanitizer;
+3. runs `make pkg`;
+4. runs `python3 -I tools/syscalls.py build/ps3_health.elf`: it lists the LV2
    syscall numbers the ELF makes (each `li r11, N` before an `sc`) and fails
    when one is not in `tools/syscalls.allow`, or when 602, 604 or 870 appears
    (see Safety). A number that reaches r11 another way escapes the scan, so
    this is a guard against a mistake, not a proof. `--write` rewrites the
    allowlist from a known-good ELF, and `--allow <file>` takes another
    allowlist (another app that runs these checks);
-4. runs `python3 -I verify_self.py`, which decrypts the signed EBOOT, compares
+5. runs `python3 -I verify_self.py`, which decrypts the signed EBOOT, compares
    every segment with the ELF and recomputes each segment's HMAC-SHA1 and the
    ECDSA signature. The Sony key material it needs is not in this repository:
    the script reads it from `~/.local/share/ps3dev/keys.toml` (or `$PS3DEV_KEYS`),
@@ -750,9 +775,10 @@ Toolchain findings that cost the most time:
 ### CI and releases
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push: the host test of
-the decoder, a compile and `--help` smoke of the Python scripts with the
-`syscalls.py` self-test, a check that `APP_VER` and `VERSION` in `sfo.xml` match
-`source/version.h` (2.2.1 is 02.21), and a pkg build on Linux with the same
+the decoder, the speed test's file handling (`test/test_speed.py`), a compile
+and `--help` smoke of the Python scripts with the `syscalls.py` self-test, a
+check that `APP_VER` and `VERSION` in `sfo.xml` match `source/version.h`
+(2.2.1 is 02.21), and a pkg build on Linux with the same
 `sdk_setup.sh` (the pkg is a workflow artifact) followed by the syscall audit of
 its ELF. The signed EBOOT is verified in CI only when the repository secret
 `PS3DEV_KEYS_TOML` holds the key file. A `v*` tag

@@ -112,4 +112,4 @@ adds:
 | `PV_NET=wired` | netctl: `wired` (the default, 1000 Mbit/s full duplex), `wired100`, `wifi` (78 %, channel 6), `wifiweak` (31 %), `down` (no address) |
 | `PV_PING=n[,k]` | the router answers each ping after n frames, every kth lost; `none`: no answer. Unset: no socket, offline |
 | `PV_ICMP=refuse` | the raw socket is refused: the ping times TCP connects |
-| `PV_DNS_MS=n` | a DNS lookup answers after n ms; unset: it fails, offline |
+| `PV_DNS_MS=n` | a lookup of example.com (the Network module's name) answers after n ms; any other name, or unset: it fails |
