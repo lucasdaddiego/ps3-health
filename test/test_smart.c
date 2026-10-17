@@ -373,7 +373,7 @@ int main(void)
     /* Help's link with the Cooling line (compat_fit_url): the line in full, its short form, or none, so that the
      * link stays within the QR code; at a long health reason (smart_health's why holds up to 255 characters) */
     {
-        static char body[1024], why[256], full[200], brief[200], u2[2400];
+        static char body[1024], why[256], full[272], brief[272], u2[2400];   /* "cooling: ", the reason, the line end */
         heat_report hr = {FAMILY_SUPER, 58, 55, 67, 62, 70, 65, 9, 25, 33, 30, 1805, 1, 1, 1};
         heat_compat_line(&hr, 1, why, sizeof why);
         snprintf(full, sizeof full, "cooling: %s\n", why);

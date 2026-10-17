@@ -119,7 +119,7 @@ static int app(char *out, int n, int j, const char *fmt, ...)
 /* ", idle 58/55": a Cell and RSX pair, "-" for one not read; nothing when both are not. */
 static int pair(char *out, int n, int j, const char *key, int c, int r)
 {
-    char a[8] = "-", b[8] = "-";
+    char a[12] = "-", b[12] = "-";           /* any int: gcc's format-truncation check */
     if (c < 0 && r < 0) return j;
     if (c >= 0) snprintf(a, sizeof a, "%d", c);
     if (r >= 0) snprintf(b, sizeof b, "%d", r);
