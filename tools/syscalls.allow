@@ -14,6 +14,10 @@
 # memory (330, 331, 337), the tty (402, 403), the network (700 to 714) and the
 # file system (801 to 834). Never 602, 604 or 870: the script refuses them
 # whatever this file says.
+# 348 and 349 (sys_memory_allocate and sys_memory_free) joined on 2026-10-16:
+# the XDR and soak tests take their 1 MB blocks as kernel pages and give them
+# back, since newlib's heap keeps what it grows to (2.2.0 rc3: the SPU group
+# got ENOMEM after an XDR test). 55 numbers.
 44
 141
 142
@@ -30,6 +34,8 @@
 330
 331
 337
+348  # sys_memory_allocate: the memory tests' blocks
+349  # sys_memory_free: the blocks given back
 383
 402
 403

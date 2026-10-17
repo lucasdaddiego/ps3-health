@@ -1,5 +1,6 @@
 /* The Memory module: pattern tests on the user memory (XDR) the app can get,
- * on the RSX memory (GDDR3) through its mapping, and on the local store of
+ * on the RSX memory (GDDR3) through its mapping (read back by the RSX's own
+ * DMA when it passes a self-check, MEM_DMA), and on the local store of
  * each of the six SPUs (spu_run.c runs ps3gfx's SPU kit: each SPU tests its
  * own 256 KB). The app writes only to memory it allocated itself and to the
  * local stores of its own SPU threads. RSX memory comes from gfx_vram
@@ -12,6 +13,7 @@
 #include <stdint.h>
 #include <ppu-lv2.h>
 #include <lv2/systime.h>
+#include <sys/memory.h>
 #include <ps3gfx/gfx.h>
 #include "app.h"
 #include <ps3gfx/ui.h>
@@ -27,10 +29,13 @@ typedef struct {
     uintptr_t err_addr[MAX_ERR];
     uint32_t err_want[MAX_ERR], err_got[MAX_ERR];
     long long w_bytes, r_bytes, w_us, r_us;  /* the writes and the reads with their compare, for the speeds in the report */
+    long long dma_bytes, ppu_bytes;          /* the RSX test's reads: by the RSX's DMA, through the mapping */
+    int rechecks;                            /* blocks whose DMA copy differed, read again through the mapping */
 } mem_result;
 
 static mem_result xdr, vram;
 static void *blk[MAX_BLOCKS];
+static int xdr_kernel;                       /* the XDR test's blocks were the kernel's pages, not malloc's */
 
 static void note_error(mem_result *r, uintptr_t addr, uint32_t want, uint32_t got)
 {
@@ -146,15 +151,42 @@ static long check_words(const uint32_t *w, unsigned n, int p, int b, unsigned i,
 /* The user memory is written and compared in place. The RSX mapping goes
  * through 64 KB chunks: a pattern chunk is built in user memory and copied
  * in, and the block is copied out before the compare, because one word at a
- * time on that mapping is far slower than a memcpy. (The RSX's own DMA into
- * main memory would be faster, but the command ring is ps3gfx's own: no
- * call of the library puts a transfer in it.) */
+ * time on that mapping is far slower than a memcpy. A read is about 0.5 us
+ * there, so with MEM_DMA the RSX copies the blocks into main memory instead
+ * (below). */
 #define CHUNK 65536
 static uint32_t chunk[CHUNK / 4] __attribute__((aligned(128)));
 static uint32_t readback[CHUNK / 4] __attribute__((aligned(128)));
 
+/* MEM_DMA 1: the RSX test reads its blocks back by the RSX's own DMA,
+ * ps3gfx's gfx_copy_to_main_job (the copy runs in the main thread between
+ * two frames), DMA_BLOCKS blocks a copy into dma_buf, main memory taken for
+ * the test only. The first use in a session is a self-check, journaled as
+ * rsx_dma, so a freeze skips the DMA at the next start. A block whose copy
+ * differs from the pattern is read again through the mapping, which
+ * decides. A refused or failed check, a failed copy, or a copy that
+ * differed where the mapping did not: the 64 KB copies, as before, for the
+ * rest of the session. 0: no DMA. */
+#ifndef MEM_DMA
+#define MEM_DMA 1
+#endif
+
+#if MEM_DMA
+#define DMA_BLOCKS 4
+enum { DMA_UNTRIED, DMA_ON, DMA_OFF };
+static int dma_state;                        /* for the session */
+static char dma_why[80];                     /* DMA_OFF: the reason */
+static char dma_note[80];                    /* the last RSX test's reads not by DMA: the reason, for the report */
+static uint8_t *dma_buf;
+static int dma_first, dma_n;                 /* the blocks in dma_buf: dma_n from dma_first */
+static int dma_keep;                         /* a copy timed out: the main thread may still write dma_buf, never freed */
+#endif
+
 static void write_block(int p, int b, int direct)
 {
+#if MEM_DMA
+    dma_n = 0;                               /* a copy made before this write is stale */
+#endif
     if (direct) {
         put_words(blk[b], BLOCK / 4, p, b, 0);
         return;
@@ -165,16 +197,114 @@ static void write_block(int p, int b, int direct)
     }
 }
 
+static void check_mapped(mem_result *r, int p, int b)
+{
+    for (unsigned off = 0; off < BLOCK; off += CHUNK) {
+        memcpy(readback, (uint8_t *)blk[b] + off, CHUNK);
+        check_words(readback, CHUNK / 4, p, b, off / 4, (uintptr_t)blk[b] + off, r, NULL);
+    }
+}
+
+#if MEM_DMA
+static void dma_off(const char *why)
+{
+    dma_state = DMA_OFF;
+    snprintf(dma_why, sizeof dma_why, "%s", why);
+    snprintf(dma_note, sizeof dma_note, "%s", why);
+}
+
+static void dma_failed(const char *what, int rc)
+{
+    char why[80];
+    if (rc == GFX_COPY_ETIME) dma_keep = 1;
+    snprintf(why, sizeof why, "%s, rc %d", what, rc);
+    dma_off(why);
+}
+
+/* The self-check, in the job thread: block 0 gets pattern 3 through the
+ * mapping, dma_buf is filled with 0x5a, and the RSX's copy of the block
+ * must equal the block read through the mapping (a bad word of the memory
+ * itself does not turn the DMA off). No writable folder (no journal), or a
+ * frozen rsx_dma, keeps the DMA off. */
+static void dma_check(void)
+{
+    if (!fs_ok) { dma_off("the app folder is not writable: no journal"); return; }
+    if (!journal_start("rsx_dma")) { dma_off("it froze this console before (journal: rsx_dma)"); return; }
+    progress("Checking the RSX's DMA copy against the mapping");
+    write_block(3, 0, 0);
+    memset(dma_buf, 0x5a, BLOCK);
+    int rc = gfx_copy_to_main_job(blk[0], dma_buf, BLOCK);
+    for (unsigned off = 0; rc == 0 && off < BLOCK; off += CHUNK) {
+        memcpy(readback, (uint8_t *)blk[0] + off, CHUNK);
+        if (memcmp(readback, dma_buf + off, CHUNK)) rc = 1;
+    }
+    journal_done("rsx_dma", rc, rc == 0);
+    if (rc == 1) dma_off("the self-check's copy differed from the mapping");
+    else if (rc) dma_failed("the self-check's copy failed", rc);
+    else dma_state = DMA_ON;
+}
+
+/* At the start of each RSX test: the main memory of the copies, and the
+ * self-check at the first test of the session. */
+static void dma_start(int blocks)
+{
+    dma_n = 0;
+    dma_note[0] = 0;
+    if (dma_state == DMA_OFF) { snprintf(dma_note, sizeof dma_note, "%s", dma_why); return; }
+    if (!blocks) return;
+    if (!dma_buf && !(dma_buf = malloc(DMA_BLOCKS * BLOCK))) {
+        snprintf(dma_note, sizeof dma_note, "no %d MB of main memory for the copies", DMA_BLOCKS);
+        return;
+    }
+    if (dma_state == DMA_UNTRIED) dma_check();
+}
+
+static void dma_end(void)
+{
+    if (!dma_keep) {
+        free(dma_buf);
+        dma_buf = NULL;
+    }
+}
+
+/* Block b from the RSX's copy, up to DMA_BLOCKS blocks a copy while they
+ * follow each other in RSX memory. 0 when the copy failed: the caller reads
+ * the block through the mapping. A block whose copy differs from the
+ * pattern is read again through the mapping, which records the errors; no
+ * wrong word there turns the DMA off. */
+static int dma_read(mem_result *r, int p, int b)
+{
+    if (b < dma_first || b >= dma_first + dma_n) {
+        int n = 1;
+        while (n < DMA_BLOCKS && b + n < r->blocks && blk[b + n] == (uint8_t *)blk[b] + n * BLOCK) n++;
+        dma_n = 0;
+        int rc = gfx_copy_to_main_job(blk[b], dma_buf, n * BLOCK);
+        if (rc) { dma_failed("a copy failed", rc); return 0; }
+        dma_first = b;
+        dma_n = n;
+    }
+    r->dma_bytes += BLOCK;
+    const uint32_t *w = (const uint32_t *)(dma_buf + (size_t)(b - dma_first) * BLOCK);
+    if (!check_words(w, BLOCK / 4, p, b, 0, (uintptr_t)blk[b], NULL, NULL)) return 1;
+    long before = r->errors;
+    check_mapped(r, p, b);
+    r->rechecks++;
+    if (r->errors == before) dma_off("a copy differed where the mapping did not");
+    return 1;
+}
+#endif
+
 static void check_block(mem_result *r, int p, int b, int direct)
 {
     if (direct) {
         check_words(blk[b], BLOCK / 4, p, b, 0, (uintptr_t)blk[b], r, NULL);
         return;
     }
-    for (unsigned off = 0; off < BLOCK; off += CHUNK) {
-        memcpy(readback, (uint8_t *)blk[b] + off, CHUNK);
-        check_words(readback, CHUNK / 4, p, b, off / 4, (uintptr_t)blk[b] + off, r, NULL);
-    }
+#if MEM_DMA
+    if (dma_buf && dma_state == DMA_ON && dma_read(r, p, b)) return;
+#endif
+    check_mapped(r, p, b);
+    r->ppu_bytes += BLOCK;
 }
 
 /* passes 1 (the quick check): patterns 0 and 1 by turns, block by block,
@@ -203,18 +333,52 @@ static void run_passes(mem_result *r, int passes, int direct)
     r->cancelled = job_cancel;
 }
 
+/* The blocks of a memory test: up to max of 1 MB from the kernel
+ * (sysMemoryAllocate, 1 MB pages), each given back with sysMemoryFree.
+ * newlib's heap keeps what it grows to: after a full XDR test by malloc the
+ * kernel had no memory left for the SPU group (2.2.0 rc3: ls_group rc
+ * 0x80010004 in a quick check that followed it). malloc only when the
+ * kernel refuses the first block. Then the last keep blocks go back at once,
+ * as headroom for the app's own heap. *kernel: where they came from, for
+ * mem_give. The blocks kept. */
+static __attribute__((noinline)) void *kernel_block(void)   /* noinline: the li r11 stays next to its sc, for tools/syscalls.py */
+{
+    sys_mem_addr_t a;
+    return sysMemoryAllocate(BLOCK, SYS_MEMORY_PAGE_SIZE_1M, &a) ? NULL : (void *)(uintptr_t)a;
+}
+
+int mem_take(void **blocks, int max, int keep, int *kernel)
+{
+    int n = 0;
+    *kernel = 1;
+    while (n < max && (blocks[n] = kernel_block()) != NULL) n++;
+    if (!n) {
+        *kernel = 0;
+        while (n < max && (blocks[n] = malloc(BLOCK)) != NULL) n++;
+    }
+    if (keep > n) keep = n;
+    mem_give(blocks + n - keep, keep, *kernel);
+    return n - keep;
+}
+
+void mem_give(void *const *blocks, int n, int kernel)
+{
+    for (int b = 0; b < n; b++) {
+        if (kernel) sysMemoryFree((sys_mem_addr_t)(uintptr_t)blocks[b]);
+        else free(blocks[b]);
+    }
+}
+
 static void xdr_run(int passes)
 {
     memset(&xdr, 0, sizeof xdr);
     progress("Allocating the user memory in 1 MB blocks");
-    int n = 0;
-    while (n < MAX_BLOCKS && (blk[n] = malloc(BLOCK)) != NULL) n++;
-    for (int k = 0; k < 8 && n > 0; k++) free(blk[--n]);     /* headroom for the app itself */
+    int n = mem_take(blk, MAX_BLOCKS, 8, &xdr_kernel);         /* 8 MB of headroom for the app itself */
     xdr.blocks = n;
     progress(passes == 4 ? "Testing the user memory (XDR): 4 patterns, each written then verified"
                          : "Testing the user memory (XDR): 1 pattern, written then verified");
     run_passes(&xdr, passes, 1);
-    for (int b = 0; b < n; b++) free(blk[b]);
+    mem_give(blk, n, xdr_kernel);
     xdr.done = 1;
 }
 
@@ -233,9 +397,15 @@ static void vram_run(int passes)
     }
     memcpy(blk, vblk, sizeof blk);
     vram.blocks = vn;
-    progress(passes == 2 ? "Testing the RSX memory (GDDR3) through its mapping: 2 patterns, slow by design"
-                         : "Testing the RSX memory (GDDR3) through its mapping: 1 pattern, slow by design");
+#if MEM_DMA
+    dma_start(vn);
+#endif
+    progress(passes == 2 ? "Testing the RSX memory (GDDR3): 2 patterns, written through the mapping, read back by the RSX"
+                         : "Testing the RSX memory (GDDR3): 1 pattern, written through the mapping, read back by the RSX");
     run_passes(&vram, passes, 0);
+#if MEM_DMA
+    dma_end();
+#endif
     vram.done = 1;
 }
 
@@ -471,7 +641,7 @@ int mod_mem_open(void)
                  "All the user memory the app can get, about 200 MB of 256: four patterns written and read back. A few seconds.",
                  &xdr);
         mem_card(MG + w + 32, TOP, w, h, BTN_TRIANGLE, "RSX memory (GDDR3)",
-                 "The free graphics memory, through its slow mapping: two patterns, under a minute. Kept until the app exits.", &vram);
+                 "The free graphics memory: two patterns, read back by the RSX. Kept until the app exits.", &vram);
         ls_card(MG + 2 * (w + 32), TOP, w, h);
         text_fit(MG, TOP + h + 24, F_BODY, GREY, SW - 2 * MG, "%s",
                  "Each test writes only to memory the app allocated or to an SPU's own local store. A wrong word is a memory error.");
@@ -535,11 +705,31 @@ static void report_result(const mem_result *r, const char *name, const char *how
         rep_out("  error at 0x%08lx: wrote 0x%08x, read 0x%08x\n", (unsigned long)r->err_addr[k], r->err_want[k], r->err_got[k]);
 }
 
+/* The RSX test's read path: dma (the RSX's copies), ppu (64 KB copies
+ * through the mapping), or both when the DMA turned off during the test. */
+static void report_vram(void)
+{
+    char how[96];
+    const char *path = !vram.dma_bytes ? "read: ppu, 64 KB copies through the mapping"
+                     : !vram.ppu_bytes ? "read: dma, the RSX's copies into main memory" : "read: dma, then ppu";
+    snprintf(how, sizeof how, "%s, %s", MEM_LINES ? "running patterns" : "pattern() per word", path);
+    report_result(&vram, "RSX memory (GDDR3)", how);
+    if (!vram.done) return;
+    if (vram.rechecks)
+        rep_out("  read again through the mapping after their DMA copy differed: %d block%s\n", vram.rechecks, vram.rechecks == 1 ? "" : "s");
+#if MEM_DMA
+    if (dma_note[0]) rep_out("  RSX DMA off: %s\n", dma_note);
+#endif
+}
+
 void mod_mem_report(void)
 {
     if (!xdr.done && !vram.done && ls.state == LS_NONE) return;
     rep_out("--- memory ---\n");
-    report_result(&xdr, "user memory (XDR)", MEM_LINES ? "running patterns, dcbz per line" : "pattern() per word");
-    report_result(&vram, "RSX memory (GDDR3)", MEM_LINES ? "running patterns, 64 KB copies through the mapping" : "pattern() per word, 64 KB copies through the mapping");
+    char how[96];
+    snprintf(how, sizeof how, "%s, %s", MEM_LINES ? "running patterns, dcbz per line" : "pattern() per word",
+             xdr_kernel ? "1 MB kernel pages" : "malloc blocks");
+    report_result(&xdr, "user memory (XDR)", how);
+    report_vram();
     ls_report();
 }

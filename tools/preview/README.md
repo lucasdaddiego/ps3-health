@@ -33,9 +33,11 @@ repeat.
 The library's world refuses every LV2 syscall and answers the network
 offline. `pv_app.c` defines the strong `pv_syscall`: the drive (syscalls 600,
 601, 609 and 616, answered from a console's sector dumps), the temperatures
-(383), the fan duty (409) and the six SPUs of the SPU kit (165, 169 to 173,
-177, 178, and the image import and close). `stub/sys/spu.h` and
-`stub/lv2/spu.h` stand in for PSL1GHT's headers (`build.zsh` adds `stub/` to
+(383), the fan duty (409), the six SPUs of the SPU kit (165, 169 to 173,
+177, 178, and the image import and close), and the kernel's 1 MB pages of
+the memory tests (348, 349: host memory from a pool, `PV_KMEM_MB`).
+`stub/sys/spu.h`, `stub/lv2/spu.h` and `stub/sys/memory.h` (its address is
+64 bits on the host) stand in for PSL1GHT's headers (`build.zsh` adds `stub/` to
 the include path), so the driver's calls reach `pv_syscall`. One emulated
 group: the start runs each thread's start at once, in the caller's thread.
 The local-store mode runs to its end there, with the kit's kernel over a host
@@ -104,6 +106,8 @@ adds:
 | `PV_HEAT_RATE=n` | heat: loops per microsecond per SPU (default 355, the design's estimate) |
 | `PV_LS_FAULT=i` | one bit stuck at 1 in one word of SPU i's local store |
 | `PV_AUDIO_CH=2` | the 8-channel audio port is refused: the module opens 2 channels |
+| `PV_KMEM_MB=n` | the kernel's pool of 1 MB pages for syscalls 348 and 349 (the memory tests' blocks), default 256; 0 refuses them: the malloc fallback (`run.zsh mem_malloc`) |
+| `PV_KMEM_STAT=1` | print the kernel pages still taken at exit: 0 after any test (`run.zsh mem_order`: the XDR test, then the quick check) |
 | `PV_WAV=file` | the audio blocks as the port reads them, raw 32-bit float, interleaved (`run.zsh audio` checks it for clicks and stale blocks) |
 | `PV_NET=wired` | netctl: `wired` (the default, 1000 Mbit/s full duplex), `wired100`, `wifi` (78 %, channel 6), `wifiweak` (31 %), `down` (no address) |
 | `PV_PING=n[,k]` | the router answers each ping after n frames, every kth lost; `none`: no answer. Unset: no socket, offline |

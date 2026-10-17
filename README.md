@@ -408,6 +408,29 @@ does not first read the line from memory; the report gives the write and the
 read speeds of each test in MB/s (`-DMEM_LINES=0` in the Makefile's `CFLAGS`
 builds the 2.1.0 loops, to compare).
 
+The RSX test writes through the mapping, and reads back by the RSX's own DMA
+(ps3gfx's `gfx_copy_to_main_job`): the RSX copies four blocks at a time into
+main memory between two frames, because a read through the mapping takes
+about 0.5 us. The first use in a session is a self-check, journaled as
+`rsx_dma`: the RSX's copy of a written block must equal the block read
+through the mapping. A block whose copy differs from its pattern is read
+again through the mapping, and that read decides; if the mapping reads no
+wrong word there, the DMA turns off. A frozen `rsx_dma` (the next start
+skips it), a failed check, a failed copy, or no writable app folder: the
+reads go through the mapping in 64 KB copies, as before. The report says
+which path read (`read: dma`, `read: ppu`, or `read: dma, then ppu`) and why
+the DMA was off. `-DMEM_DMA=0` builds the test without the DMA.
+
+The XDR test and the soak's memory turns take their 1 MB blocks as kernel
+pages (`sys_memory_allocate`, syscall 348) and give each back at the end
+(`sys_memory_free`, 349). With malloc, newlib's heap kept the memory it grew
+to: on 2.2.0 rc3, a quick check after a full XDR test could not create the
+SPU group (`ls_group` rc 0x80010004, out of memory). So the tests run in any
+order in one session. The XDR test still gives 8 MB back at once, as
+headroom for the app's own heap. When the kernel refuses the first page, the
+blocks come from malloc as before; the report names which (`1 MB kernel
+pages` or `malloc blocks`).
+
 SQUARE tests the local store of each of the six SPUs, the Cell's helper
 cores. The app runs its own SPU program (ps3gfx's SPU kit) as one group of
 six SPU threads, and each thread tests about 234 KB of its own 256 KB local

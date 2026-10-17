@@ -242,6 +242,12 @@ quick|all)   # R1 on the home screen: the intro, the steps running, the verdict;
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn quick "4:R1 12:SNAP=quick_intro 14:CROSS 40:SNAP=quick_run 2400:SNAP=quick_result 2402:CIRCLE 2410:SNAP=home_quick 2411:EXIT" PV_PING=1 PV_RISE=1 PV_MAXFRAMES=5000
     grep -h -E "^(--- |verdict|ping|XDR|user memory|RSX memory|SPU local)" $SBX/quick/dev_hdd0/tmp/ps3_health/report-*.txt | tail -14
     SAFE='160 90 1760 990' STATE= JOURNAL=$J_DONE scn quick_min "4:R1 12:SNAP=quick_min_intro 14:CROSS 2400:SNAP=quick_min_result 2401:EXIT" PV_PING=1 PV_MAXFRAMES=5000 ;|
+mem_order|all)   # the XDR test, then the quick check (2.2.0 rc3: its SPU group got ENOMEM): every kernel page comes back
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn mem_order "$MEM 20:CROSS 2000:CIRCLE 2010:R1 2020:CROSS 4400:SNAP=mem_order 4401:EXIT" PV_PING=1 PV_KMEM_STAT=1 PV_MAXFRAMES=6000
+    grep -h -E "^(user memory|RSX memory|SPU local)" $SBX/mem_order/dev_hdd0/tmp/ps3_health/report-*.txt | tail -4 ;|
+mem_malloc|all)   # the kernel refuses its pages: the XDR test takes malloc's blocks, as before 2.2.0
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn mem_malloc "$MEM 20:CROSS 2000:SNAP=mem_malloc 2002:CIRCLE 2010:EXIT" PV_KMEM_MB=0 PV_KMEM_STAT=1
+    grep -h "^user memory" $SBX/mem_malloc/dev_hdd0/tmp/ps3_health/report-*.txt ;|
 quick_stop|all)   # CIRCLE during the memory step: the network step is not run
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn quick_stop "4:R1 14:CROSS 30:CIRCLE 400:SNAP=quick_stop 401:EXIT" PV_PING=1 PV_MAXFRAMES=5000 ;|
 drive_life|all)   # the SSD at 91 % after 100, 97, 94 a month apart: about 30 months to 0 %; and with two days of reads: no estimate yet

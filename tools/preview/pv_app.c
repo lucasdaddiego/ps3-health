@@ -244,8 +244,48 @@ static u64 spu_call(int n, u64 a, u64 b, u64 c, u64 f)
     return 0x80010003;
 }
 
+/* ---- the kernel's pages (348, 349) ----------------------------------------
+ * sys_memory_allocate and sys_memory_free in 1 MB pages, for the memory
+ * tests' blocks (mod_mem.c's mem_take), from a pool of PV_KMEM_MB (default
+ * 256: the XDR test takes its cap of 256 blocks, as malloc gave it before).
+ * PV_KMEM_MB=0 refuses the first page: the malloc fallback. With
+ * PV_KMEM_STAT=1 the exit prints the pages still taken: every test gives
+ * its pages back, so it must be 0. */
+#define KMEM_MAX 512
+static void *kmem[KMEM_MAX];
+static int kmem_taken;
+
+static void kmem_exit(void)
+{
+    if (getenv("PV_KMEM_STAT")) fprintf(stderr, "kmem: %d pages of 1 MB still taken\n", kmem_taken);
+}
+
+static u64 kmem_call(int n, u64 a, u64 b, u64 c)
+{
+    static int once;
+    if (!once) { once = 1; atexit(kmem_exit); }
+    if (n == 349) {
+        for (int i = 0; i < KMEM_MAX; i++)
+            if (kmem[i] && (u64)(uintptr_t)kmem[i] == a) { free(kmem[i]); kmem[i] = NULL; kmem_taken--; return 0; }
+        return 0x80010002;                           /* not an allocated address */
+    }
+    if (a != 1 << 20 || !(b & 0x400)) return 0x80010002;   /* one 1 MB page, as mem_take asks */
+    if (kmem_taken >= env_int("PV_KMEM_MB", 256)) return 0x80010004;
+    for (int i = 0; i < KMEM_MAX; i++)
+        if (!kmem[i]) {
+            void *m = NULL;
+            if (posix_memalign(&m, 1 << 20, a)) return 0x80010004;
+            kmem[i] = m;
+            kmem_taken++;
+            *(u64 *)(uintptr_t)c = (u64)(uintptr_t)m;
+            return 0;
+        }
+    return 0x80010004;
+}
+
 u64 pv_syscall(int n, u64 a, u64 b, u64 c, u64 d, u64 e, u64 f, u64 g)
 {
+    if (n == 348 || n == 349) return kmem_call(n, a, b, c);
     (void)d; (void)g;
     if (n == 165 || (n >= 169 && n <= 178)) return spu_call(n, a, b, c, f);
     switch (n) {

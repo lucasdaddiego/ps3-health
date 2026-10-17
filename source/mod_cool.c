@@ -437,6 +437,7 @@ static void load_screen(int seconds)
 /* The memory turn's thread: the Memory module's four patterns, one after
  * the other, over the soak's blocks until the turn ends. */
 static void *soak_blk[SOAK_BLOCKS];
+static int soak_kernel;                      /* soak_blk are the kernel's pages (mem_take) */
 static volatile int mem_stop;
 static volatile long mem_errors, mem_passes;
 static volatile unsigned long mem_first;
@@ -537,7 +538,7 @@ static void soak_screen(int minutes)
     start_test(seconds, minutes);
     mem_errors = mem_passes = 0;
     mem_first = 0;
-    while (load.mem_blocks < SOAK_BLOCKS && (soak_blk[load.mem_blocks] = malloc(1024 * 1024)) != NULL) load.mem_blocks++;
+    load.mem_blocks = mem_take(soak_blk, SOAK_BLOCKS, 0, &soak_kernel);   /* given back at the end, so an SPU group after the soak finds memory */
     if (spu_stuck()) spu.stuck = 1;
     load_on = 1;
     int started = 0, turn = 0;
@@ -596,7 +597,7 @@ static void soak_screen(int minutes)
     if (in_turn) turn_end(turn);
     load_on = 0;
     for (int k = 0; k < 2; k++) if (ok[k]) sysThreadJoin(th[k], &ret);
-    for (int b = 0; b < load.mem_blocks; b++) free(soak_blk[b]);
+    mem_give(soak_blk, load.mem_blocks, soak_kernel);
     load.mem_errors = mem_errors;
     load.mem_passes = mem_passes;
     load.mem_first = mem_first;
@@ -730,8 +731,15 @@ static const char *paste_word(void)
     return paste.verdict == PASTE_OK ? ", paste ok" : paste.verdict == PASTE_CHECK ? ", check paste" : paste.verdict == PASTE_LIKELY ? ", dry paste?" : "";
 }
 
-/* The idle warning: the family's idle range and a margin, else 70 C (heat_idle_hot). */
-static int idle_hot(void) { return heat_idle_hot(family, cpu_now > rsx_now ? cpu_now : rsx_now); }
+/* The idle warning: the family's idle range and a margin, else 70 C
+ * (heat_idle_hot). Not under 10 minutes after a load of this session: the
+ * chips are still warm then (the quick check right after two load tests
+ * read 64 C on the author's console, 2.2.0-rc3). */
+static int idle_hot(void)
+{
+    if (last_end && sysGetSystemTime() - last_end < (s64)HEAT_REST_S * 1000000) return 0;
+    return heat_idle_hot(family, cpu_now > rsx_now ? cpu_now : rsx_now);
+}
 
 static void cool_tile(void)
 {

@@ -121,5 +121,10 @@ int network_quick_end(char *line, int n);
  * wrong reads in *errors). */
 long mem_soak_pass(void *const *blocks, int n, int p, volatile int *stop, unsigned long *first);
 int mem_soak_ls(spu_result *r, unsigned *errors);
+/* The blocks of a memory test (mod_mem.c): up to max of 1 MB, the kernel's
+ * pages that mem_give hands back (malloc's when the kernel refuses), less
+ * keep given back at once as headroom; *kernel for mem_give. The count. */
+int mem_take(void **blocks, int max, int keep, int *kernel);
+void mem_give(void *const *blocks, int n, int kernel);
 
 #endif
