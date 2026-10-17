@@ -2,8 +2,9 @@
 # Build ps3_health.gnpdrm.pkg. Toolchain: $PS3DEV or ~/ps3dev, made by sdk_setup.sh
 # (the ps3dev bundle with PSL1GHT's 2020 runtime, and ps3gfx at the commit the
 # script pins: the stamp check below, PS3GFX_DEV=1 skips it). Runs the Mac-side
-# decoder test first, and checks the signed EBOOT against the ELF before it
-# trusts the pkg.
+# tests first, as CI does (the decoder test with -Werror, the speed test's file
+# handling), and checks the signed EBOOT against the ELF before it trusts the
+# pkg.
 set -e
 cd "${0:A:h}"
 export PS3DEV=${PS3DEV:-$HOME/ps3dev}
@@ -15,9 +16,10 @@ export PATH=$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin
 rev=$(sed -n 's/^PS3GFX_REV=\([0-9a-f]*\).*/\1/p' sdk_setup.sh); stamp=$(cat $PS3DEV/portlibs/ppu/share/ps3gfx/COMMIT 2>/dev/null)
 [[ $PS3GFX_DEV == 1 || $stamp == $rev ]] || { print -u2 "ps3gfx in $PS3DEV is ${stamp:-unstamped}, sdk_setup.sh pins $rev: run ./sdk_setup.sh, or PS3GFX_DEV=1 to build against the installed one"; exit 1 }
 t=$(mktemp -d)
-cc -std=c99 -Wall -Wextra -o $t/test_smart test/test_smart.c source/smart.c source/vendor.c source/trend.c source/compat.c source/qrcodegen.c source/heat.c source/ping.c source/tone.c -lm
+cc -std=c99 -Wall -Wextra -Werror -o $t/test_smart test/test_smart.c source/smart.c source/vendor.c source/trend.c source/compat.c source/qrcodegen.c source/heat.c source/ping.c source/tone.c -lm
 $t/test_smart
 rm -r $t
+python3 -I test/test_speed.py
 rm -f ps3_health.pkg ps3_health.gnpdrm.pkg
 make pkg
 ${PYTHON:-python3} -I tools/syscalls.py build/ps3_health.elf

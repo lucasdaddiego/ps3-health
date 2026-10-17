@@ -132,7 +132,7 @@ int vendor_detect(const char *model)
         (starts(model, "ST") && model[2] >= '0' && model[2] <= '9')) return VENDOR_SEAGATE;
     if (has(model, "Intel") || starts(model, "SSDSC") || starts(model, "SSDSA") || starts(model, "SSDPE")) return VENDOR_INTEL;
     if (has(model, "Toshiba") || has(model, "Kioxia") || starts(model, "THNS") || starts(model, "MQ0") ||
-        starts(model, "MK")) return VENDOR_TOSHIBA;
+        (starts(model, "MK") && model[2] >= '0' && model[2] <= '9')) return VENDOR_TOSHIBA;   /* MK1655GSX, not Mushkin's MKNSSD */
     if (has(model, "Dahua") || starts(model, "DHI-")) return VENDOR_MAXIO;
     return VENDOR_UNKNOWN;
 }

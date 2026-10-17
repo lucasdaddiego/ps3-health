@@ -461,8 +461,9 @@ s32 netCtlGetInfo(s32 code, union net_ctl_info *i)
  * times are frame steps), every nth lost; PV_PING=none answers nothing.
  * PV_ICMP=refuse: the raw socket is refused, so the module times TCP
  * connects (refused at once by the router, as a closed port 80). No PV_PING:
- * offline, as the library's world. PV_DNS_MS=n: a lookup answers after n ms
- * (no PV_DNS_MS: it fails, offline). */
+ * offline, as the library's world. PV_DNS_MS=n: a lookup of example.com,
+ * the Network module's name, answers after n ms; any other name (Transfer's
+ * download host) fails, as it does with no PV_DNS_MS (offline). */
 #define FD_RAW 0x701
 #define FD_TCP 0x702
 static s32 pv_errno = NET_ENETDOWN;
@@ -551,11 +552,15 @@ s32 netGetSockOpt(s32 s, s32 lv, s32 o, void *v, socklen_t *l)
     return 0;
 }
 
+/* The address list is a 32-bit pointer, as in the network library, and the
+ * host has no memory such a pointer reaches (a 64-bit macOS process maps
+ * nothing in its low 4 GB). So only the Network module's name gets an
+ * answer: that module reads no address, h_addr_list only has to be set.
+ * Transfer's resolve() reads the address: its host gets NULL. */
 struct net_hostent *netGetHostByName(const char *name)
 {
-    static struct net_hostent he = {0, 0, 2, 4, 1};   /* only the answer counts: the address list is never read */
-    (void)name;
-    if (!getenv("PV_DNS_MS")) return NULL;
+    static struct net_hostent he = {0, 0, 2, 4, 1};   /* AF_INET, 4-byte addresses, a list pointer that is set */
+    if (!getenv("PV_DNS_MS") || strcmp(name, "example.com")) return NULL;
     wait_until(sysGetSystemTime() + (u64)atoi(getenv("PV_DNS_MS")) * 1000);
     return &he;
 }

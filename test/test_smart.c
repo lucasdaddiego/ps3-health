@@ -28,6 +28,15 @@ static void put_string(uint8_t *b, int first, int nwords, const char *s)
     for (int k = 0; k < nwords; k++) put_word(b, first + k, (uint8_t)pad[2 * k] << 8 | (uint8_t)pad[2 * k + 1]);
 }
 
+/* A Phy event counter at off: the id, then the value in 2 x its size code bytes, little endian. The next offset. */
+static int put_phy(uint8_t *b, int off, unsigned id, unsigned long long v)
+{
+    b[off] = id & 0xff;
+    b[off + 1] = id >> 8;
+    for (unsigned i = 0; i < 2 * ((id >> 12) & 7); i++) b[off + 2 + i] = i < 8 ? (uint8_t)(v >> (8 * i)) : 0;
+    return off + 2 + 2 * ((id >> 12) & 7);
+}
+
 static void seal(uint8_t *b)            /* make the byte sum 0, as the drive does */
 {
     unsigned sum = 0;
@@ -163,6 +172,9 @@ int main(void)
     CHECK(vendor_detect("ST1000LM035-1RK172") == VENDOR_SEAGATE);
     CHECK(vendor_detect("INTEL SSDSC2KW512G8") == VENDOR_INTEL);
     CHECK(vendor_detect("TOSHIBA MQ01ABD100") == VENDOR_TOSHIBA);
+    CHECK(vendor_detect("MK1655GSX") == VENDOR_TOSHIBA && vendor_detect("TOSHIBA MK2555GSX") == VENDOR_TOSHIBA);
+    CHECK(vendor_detect("MKNSSDRE1TB") == VENDOR_UNKNOWN);          /* Mushkin: no Toshiba table, whose 241 is in LBAs */
+    CHECK(vendor_detect("MKNSSDCR240GB-DX") == VENDOR_UNKNOWN && vendor_detect("MK") == VENDOR_UNKNOWN);
     CHECK(vendor_detect("Dahua V800 2.5 inch SATA 1TB SSD") == VENDOR_MAXIO);
     CHECK(vendor_detect("DHI-SSD-V800S1TB") == VENDOR_MAXIO);
     CHECK(vendor_detect("Some Drive") == VENDOR_UNKNOWN && vendor_detect("") == VENDOR_UNKNOWN);
@@ -269,6 +281,20 @@ int main(void)
     CHECK(phy_parse(ph, &pc) == 0 && pc.count == 3 && pc.icrc == 7 && pc.comreset == 3 && pc.crc_h2d == 2 && pc.phy_nrdy == -1);
     memset(ph, 0, sizeof ph);
     CHECK(phy_parse(ph, &pc) == -1);
+    put_phy(ph, put_phy(ph, 4, 0x300A, 0x123456789ABCull), 0x1001, 5);    /* a 48-bit counter: 6 bytes, then a 16-bit one */
+    CHECK(phy_parse(ph, &pc) == 0 && pc.count == 2 && pc.comreset == 0x123456789ABCll && pc.icrc == 5);
+    memset(ph, 0, sizeof ph);
+    put_phy(ph, put_phy(ph, 4, 0x4009, 0x0102030405060708ull), 0x100B, 4);   /* a 64-bit counter first */
+    CHECK(phy_parse(ph, &pc) == 0 && pc.count == 2 && pc.phy_nrdy == 0x0102030405060708ll && pc.crc_h2d == 4);
+    memset(ph, 0, sizeof ph);
+    put_phy(ph, 4, 0x4002, ~0ull);                                         /* over LLONG_MAX: kept at it, not negative */
+    CHECK(phy_parse(ph, &pc) == 0 && pc.rerr_data == 0x7FFFFFFFFFFFFFFFll);
+    memset(ph, 0, sizeof ph);
+    put_phy(ph, put_phy(ph, 4, 0x1001, 5), 0x9001, 9);                    /* vendor 0x8001 is not the ICRC counter 0x001 */
+    CHECK(phy_parse(ph, &pc) == 0 && pc.count == 2 && pc.icrc == 5);
+    memset(ph, 0, sizeof ph);
+    put_phy(ph, put_phy(ph, 4, 0x1001, 5), 0x5009, 1);                    /* size code 5: the list stops there */
+    CHECK(phy_parse(ph, &pc) == 0 && pc.count == 1 && pc.phy_nrdy == -1);
 
     /* the host-writes unit math, and the error counters added up */
     CHECK(writes_bytes(3, UNIT_LBA) == 1536.0 && writes_bytes(2, UNIT_GIB) == 2147483648.0);

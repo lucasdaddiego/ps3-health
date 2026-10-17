@@ -1,6 +1,7 @@
 /* Decoders for IDENTIFY DEVICE, SMART data and the self-test log (ACS-3 layouts).
  * The drive sends IDENTIFY as little-endian 16-bit words, and ATA strings hold
  * two characters per word, high byte first. SMART sectors are byte arrays. */
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include "smart.h"
@@ -467,8 +468,12 @@ void devstat_ssd(const uint8_t *buf, dev_stats *o)
     o->endurance_used = v < 0 ? -1 : (int)(v & 0xff);
 }
 
-/* Log 11h: from byte 4, counters of (16-bit id, value of 2 << ((id >> 12) & 7)
- * bytes... the size code in bits 14:12: 1 = 16, 2 = 32, 3 = 64 bits); id 0 ends. */
+/* Log 11h: from byte 4, counters of a 16-bit id and its value, little
+ * endian. The size code in the id's bits 14:12 is the value's length in
+ * words (1 = 16, 2 = 32, 3 = 48, 4 = 64 bits), as smartmontools reads it; id
+ * 0 ends the list. Bit 15 marks a vendor counter: the id keeps it (as
+ * smartmontools' id &= 0x8fff), so a vendor 0x8001 is not the standard
+ * 0x001. A value over the field's range is kept as LLONG_MAX. */
 int phy_parse(const uint8_t *buf, phy_counters *o)
 {
     memset(o, 0, sizeof *o);
@@ -476,14 +481,15 @@ int phy_parse(const uint8_t *buf, phy_counters *o)
     int off = 4;
     while (off + 2 <= 510) {
         unsigned id = buf[off] | buf[off + 1] << 8;
-        if ((id & 0x0FFF) == 0) break;       /* identifier 0 ends the list (the Dahua writes it with size bits set) */
-        unsigned code = (id >> 12) & 7;      /* 1, 2 or 3: 2, 4 or 8 bytes; 0 has no size */
-        if (code < 1 || code > 3) break;
-        int size = 1 << code;
+        if ((id & 0x8FFF) == 0) break;       /* identifier 0 ends the list (the Dahua writes it with size bits set) */
+        unsigned code = (id >> 12) & 7;      /* 1 to 4: 2 to 8 bytes; 0 has no size */
+        if (code < 1 || code > 4) break;
+        int size = 2 * code;
         if (off + 2 + size > 510) break;
-        long long v = 0;
-        for (int i = size - 1; i >= 0; i--) v = v << 8 | buf[off + 2 + i];
-        switch (id & 0x0FFF) {
+        uint64_t u = 0;
+        for (int i = size - 1; i >= 0; i--) u = u << 8 | buf[off + 2 + i];
+        long long v = u > (uint64_t)LLONG_MAX ? LLONG_MAX : (long long)u;
+        switch (id & 0x8FFF) {
         case 0x001: o->icrc = v; break;              /* command failed, ICRC error */
         case 0x002: o->rerr_data = v; break;         /* R_ERR response for data FIS */
         case 0x005: o->nonfis_errors = v; break;     /* R_ERR response for non-data FIS */

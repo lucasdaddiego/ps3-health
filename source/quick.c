@@ -131,15 +131,16 @@ static void run_steps(void)
 }
 
 /* The results: a row per step and the verdict. A step that gives no dot
- * (DOT_NONE: the network did not start) did not run its test. The tiles
+ * (DOT_NONE: the network did not start) did not run its test. Stopped only
+ * when a step did not run: CIRCLE in the last step skips nothing. The tiles
  * go to state.txt in one write. 0 home, -1 exit. */
 static int verdict(void)
 {
     char bad[96] = "", warn[96] = "", none[96] = "", msg[200];
-    int stopped = stop_after || job_cancel;
+    int stopped = 0;
     state_hold();
     for (int k = 0; k < STEPS; k++) {
-        if (state[k] != S_DONE) { dot[k] = DOT_NONE; continue; }
+        if (state[k] != S_DONE) { dot[k] = DOT_NONE; stopped = 1; continue; }
         dot[k] = steps[k].end(result[k], sizeof result[k]);
         char *list = dot[k] == DOT_BAD ? bad : dot[k] == DOT_WARN ? warn : dot[k] == DOT_NONE ? none : NULL;
         if (list) snprintf(list + strlen(list), sizeof bad - strlen(list), "%s%s", list[0] ? ", " : "", steps[k].name);

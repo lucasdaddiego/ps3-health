@@ -110,7 +110,8 @@ static void copy_file(const char *src, const char *dst, char *buf, u64 n, u64 ma
  * write). The copy is one journaled call. The journal's size is read before
  * its start line, and the copy stops there: the copy on the stick holds the
  * whole history (the journal is append-only) and no open start of its own. A
- * trend.txt that this console does not have is removed from the stick. */
+ * journal or a trend.txt that this console does not have (or an empty
+ * journal, after SQUARE twice) is removed from the stick. */
 #define USB_NONE 1
 #define USB_FROZEN 2
 static int report_copy_usb(char *dst, int n)
@@ -130,7 +131,7 @@ static int report_copy_usb(char *dst, int n)
         snprintf(dst, n, "%s/%s", dir, base);
         rc = fs_write_file(dst, rep, rlen, 0);
     }
-    if (rc == 0 && jlen > 0) {               /* its bytes before the start line (rc ignored) */
+    if (rc == 0) {                           /* its bytes before the start line (rc ignored); none: the stick's copy goes */
         char jdst[64];
         snprintf(jdst, sizeof jdst, "%s/journal.txt", dir);
         copy_file(APP_DIR "/journal.txt", jdst, jtext, sizeof jtext, jlen);

@@ -68,7 +68,7 @@ memrsx|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn memrsx "4:DOWN 6:LEFT 10:CROSS 20:TRIANGLE 1000:SNAP=mem_rsx 1002:CIRCLE 1010:SNAP=home_memrsx 1011:EXIT"
     grep -h "RSX memory" $P/build/sbx/memrsx/dev_hdd0/tmp/ps3_health/report-*.txt ;|
 net|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn net "4:DOWN 5:RIGHT 7:RIGHT 9:CROSS 17:SNAP=net_main 19:CROSS 402:SNAP=net_usb 404:TRIANGLE 502:SNAP=net_after 503:EXIT" ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn net "4:DOWN 5:RIGHT 7:RIGHT 9:CROSS 17:SNAP=net_main 19:CROSS 402:SNAP=net_usb 404:TRIANGLE 502:SNAP=net_after 503:EXIT" PV_DNS_MS=23 ;|
 home|all)   # eight tiles, at the default visible area and at the smallest (1600 x 900)
     HOME8=$'drive|1|2026-10-08|Health OK, 934 h|Dahua V800 2.5 inch SATA 1TB SSD\ncooling|2|2026-10-08|Cell 52>74, RSX 55>77 C|fan 33>45%, 2:00 load, 6 SPUs, check paste\npad|1|2026-10-08|Drift L 0.8%, R 1.2%|Circle L 96%, R 94%\ndisplay|1|2026-10-08|1920x1080p 16:9|Visible area 1786 x 1004\naudio|2|2026-10-08|Right not heard|walk 7 of 8 heard, sweep heard\nnetwork|1|2026-10-08|Wired, 1000 Mbit/s full|router 0.6 ms, no loss, DNS 23 ms\ntransfer|1|2026-10-08|USB 18/22 MB/s|net 94, LAN 812 Mbit/s\nmemory|3|2026-10-08|XDR 200 MB: 2 errors|RSX 196 MB: 0 errors, SPU ok\n'
     SAFE=$DEF_SAFE JOURNAL= STATE=$HOME8 scn home "3:SNAP=home_filled 4:RIGHT 6:SNAP=home_sel 8:DOWN 10:SNAP=home_sel_row2 12:LEFT 14:LEFT 16:SNAP=home_sel_wrap 17:EXIT"
@@ -115,6 +115,11 @@ copy_frozen|all)
     cat $P/build/sbx/copy_frozen/dev_usb000/ps3_health/journal.txt
     SAFE=$DEF_SAFE STATE= JOURNAL=$'start usb_copy\n' NOFS=1 scn copy_frozen_nofs "3:SELECT 10:SNAP=copy_frozen_nofs 11:EXIT"
     cat $P/build/sbx/copy_frozen_nofs/dev_hdd0/tmp/ps3_health/journal.txt ;|
+copy_empty|all)   # a copy puts journal.txt on the stick; after SQUARE twice (an empty journal) the next copy removes it
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn copy_empty "3:SELECT 30:EXIT"
+    again copy_empty "3:SQUARE 5:SQUARE 9:SELECT 40:EXIT"
+    [[ -f $P/build/sbx/copy_empty/dev_usb000/ps3_health/journal.txt ]] && print "copy_empty: the older journal.txt STAYED on the stick" ||
+        print "copy_empty: no journal.txt on the stick" ;|
 trend|all)   # the open adds a line to the seed, CROSS another; SELECT copies trend.txt
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE TREND=$TREND_SEED scn trend "4:CROSS 12:CROSS 120:RIGHT 122:RIGHT 130:SNAP=trend 132:CROSS 240:SNAP=trend_reread 242:SELECT 270:SNAP=trend_usb 271:EXIT"
     cat $P/build/sbx/trend/dev_hdd0/tmp/ps3_health/trend.txt
