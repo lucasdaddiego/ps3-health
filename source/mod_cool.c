@@ -137,13 +137,25 @@ static int family_screen(void)
 /* ---- the load ------------------------------------------------------------- */
 
 static volatile int load_on;
+static volatile double load_sink;            /* one store a batch: the sums keep the loops' work */
 
+/* Ten fmadd chains in registers, each on its own value: the FPU starts one
+ * a cycle while each waits for its own last result (about 10 cycles on the
+ * PPU). A volatile x on the stack made each loop a load, an fmadd and a
+ * store on one slot, and each load waited for the store before it. Each
+ * batch starts again at 1 to 10, so the values stay small and change in
+ * their low bits in every loop. */
 static void load_thread(void *arg)
 {
     (void)arg;
-    volatile double x = 1.0;
     while (load_on) {
-        for (int i = 0; i < 200000; i++) x = x * 1.0000001 + 0.5;
+        double a0 = 1, a1 = 2, a2 = 3, a3 = 4, a4 = 5, a5 = 6, a6 = 7, a7 = 8, a8 = 9, a9 = 10;
+        for (int i = 0; i < 200000; i++) {
+            a0 = a0 * 1.0000001 + 0.5; a1 = a1 * 1.0000001 + 0.5; a2 = a2 * 1.0000001 + 0.5; a3 = a3 * 1.0000001 + 0.5;
+            a4 = a4 * 1.0000001 + 0.5; a5 = a5 * 1.0000001 + 0.5; a6 = a6 * 1.0000001 + 0.5; a7 = a7 * 1.0000001 + 0.5;
+            a8 = a8 * 1.0000001 + 0.5; a9 = a9 * 1.0000001 + 0.5;
+        }
+        load_sink = a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9;
     }
     sysThreadExit(0);
 }

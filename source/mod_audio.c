@@ -6,8 +6,8 @@
  * the system's audio library (libaudio, an SPRX of the firmware): eight
  * channels when the port opens with eight, else two. The start (the module
  * load, the library, the port) and the end are one journaled call each. A
- * thread keeps the port's ring of 16 blocks filled about 43 ms ahead of the
- * block the system reads. */
+ * thread keeps 7 blocks of the port's ring of 16 written ahead of the block
+ * the system reads: about 37 ms. */
 #include <stdio.h>
 #include <string.h>
 #include <lv2/systime.h>
@@ -25,7 +25,7 @@
 #define LFE_HZ 50                            /* the subwoofer channel: a receiver filters it under about 120 Hz */
 #define SWEEP_S 12
 #define BLOCKS AUDIO_BLOCK_16
-#define AHEAD 8                              /* blocks written ahead of the read: 8 x 256 samples, about 43 ms */
+#define AHEAD 8                              /* the write stops AHEAD blocks past the read: 7 x 256 samples ahead, about 37 ms */
 #define CUT_MS 40                            /* the fade out of the sound that plays when the port ends */
 #define CH_MAX 8
 
@@ -167,13 +167,14 @@ static int audio_up(void)
 
 /* The end: the sound that plays fades out in CUT_MS (a sweep's own fade is
  * 0.5 s), the port plays the faded blocks and some silence (the fade written,
- * then 70 ms: AHEAD blocks are 43 ms; 400 ms at most), the thread ends and
- * the whole ring is zeroed; then the port stop, its close, the library's
- * end and the module unload, each only where its start succeeded. One
- * journaled call. An end that froze this console before is not made: the
- * port stays open and silent, the flags stay, and a later test in this
- * session plays on it (no second start, no second audioInit). No journal
- * (no writable app folder): the port never opened, the module stays closed. */
+ * then 70 ms: the 7 blocks ahead are 37 ms; 400 ms at most), the thread
+ * ends and the whole ring is zeroed; then the port stop, its close, the
+ * library's end and the module unload, each only where its start
+ * succeeded. One journaled call. An end that froze this console before is
+ * not made: the port stays open and silent, the flags stay, and a later
+ * test in this session plays on it (no second start, no second audioInit).
+ * No journal (no writable app folder): the port never opened, the module
+ * stays closed. */
 void audio_end(void)
 {
     u64 ret;

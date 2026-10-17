@@ -102,17 +102,30 @@ static void put_words(uint32_t *w, unsigned n, int p, int b, unsigned i)
 /* The compare of n words read at w with pattern p from word i of block b:
  * word k's address is at + 4 k. Each wrong one goes to res (NULL: counted
  * only), the first one's address to *first when first is not NULL. The
- * errors. */
+ * errors. Line by line: each line's start asks for the line 8 ahead
+ * (dcbt), so the in-order PPU compares while the next lines come from
+ * memory, instead of waiting for each one. Near the end the hint names
+ * lines past w's last word: dcbt is a hint, it never faults (an address
+ * that would fault makes it a no-op), and the address is an integer, so
+ * no pointer goes past the array. */
+#define PREFETCH_AHEAD (8 * CACHE_LINE)
 static long check_words(const uint32_t *w, unsigned n, int p, int b, unsigned i, uintptr_t at, mem_result *res, unsigned long *first)
 {
     run r = run_at(p, b, i);
     long errors = 0;
-    for (unsigned k = 0; k < n; k++, r.x += r.dx, r.m ^= r.t) {
-        uint32_t want = r.x ^ r.m;
-        if (w[k] == want) continue;
-        if (res) note_error(res, at + k * 4, want, w[k]);
-        if (first && !errors) *first = (unsigned long)(at + k * 4);
-        errors++;
+    unsigned k = 0;
+    while (k < n) {
+        uintptr_t a = (uintptr_t)(w + k);
+        unsigned end = k + (CACHE_LINE - (a & (CACHE_LINE - 1))) / 4;   /* the next line's first word */
+        if (end > n) end = n;
+        __builtin_prefetch((const void *)(a + PREFETCH_AHEAD));
+        for (; k < end; k++, r.x += r.dx, r.m ^= r.t) {   /* the offsets in 64 bits: no 32-bit k * 4 to keep in the loop */
+            uint32_t want = r.x ^ r.m;
+            if (w[k] == want) continue;
+            if (res) note_error(res, at + (uintptr_t)k * 4, want, w[k]);
+            if (first && !errors) *first = (unsigned long)(at + (uintptr_t)k * 4);
+            errors++;
+        }
     }
     return errors;
 }
@@ -160,23 +173,28 @@ static uint32_t readback[CHUNK / 4] __attribute__((aligned(128)));
 /* MEM_DMA 1: the RSX test reads its blocks back by the RSX's own DMA,
  * ps3gfx's gfx_copy_to_main_job (the copy runs in the main thread between
  * two frames), DMA_BLOCKS blocks a copy into dma_buf, main memory taken for
- * the test only. The first use in a session is a self-check, journaled as
- * rsx_dma, so a freeze skips the DMA at the next start. A block whose copy
- * differs from the pattern is read again through the mapping, which
- * decides. A refused or failed check, a failed copy, or a copy that
- * differed where the mapping did not: the 64 KB copies, as before, for the
- * rest of the session. 0: no DMA. */
+ * the test only. 16 blocks (GFX_COPY_MAX): each copy waits for a frame end,
+ * about 8 ms, so a pass over 231 MB waits 15 times, not 58 as with 4
+ * blocks (4 MB: about 33 ms of copy and compare). DMA_BLOCKS_MIN blocks
+ * when 16 MB of main memory is not free. The first use in a session is a
+ * self-check, journaled as rsx_dma, so a freeze skips the DMA at the next
+ * start. A block whose copy differs from the pattern is read again through
+ * the mapping, which decides. A refused or failed check, a failed copy, or
+ * a copy that differed where the mapping did not: the 64 KB copies, as
+ * before, for the rest of the session. 0: no DMA. */
 #ifndef MEM_DMA
 #define MEM_DMA 1
 #endif
 
 #if MEM_DMA
-#define DMA_BLOCKS 4
+#define DMA_BLOCKS (GFX_COPY_MAX / BLOCK)
+#define DMA_BLOCKS_MIN 4
 enum { DMA_UNTRIED, DMA_ON, DMA_OFF };
 static int dma_state;                        /* for the session */
 static char dma_why[80];                     /* DMA_OFF: the reason */
 static char dma_note[80];                    /* the last RSX test's reads not by DMA: the reason, for the report */
 static uint8_t *dma_buf;
+static int dma_blocks;                       /* the blocks dma_buf holds: DMA_BLOCKS or DMA_BLOCKS_MIN */
 static int dma_first, dma_n;                 /* the blocks in dma_buf: dma_n from dma_first */
 static int dma_keep;                         /* a copy timed out: the main thread may still write dma_buf, never freed */
 #endif
@@ -251,8 +269,10 @@ static void dma_start(int blocks)
     dma_note[0] = 0;
     if (dma_state == DMA_OFF) { snprintf(dma_note, sizeof dma_note, "%s", dma_why); return; }
     if (!blocks) return;
-    if (!dma_buf && !(dma_buf = malloc(DMA_BLOCKS * BLOCK))) {
-        snprintf(dma_note, sizeof dma_note, "no %d MB of main memory for the copies", DMA_BLOCKS);
+    if (!dma_buf && (dma_buf = malloc(DMA_BLOCKS * BLOCK))) dma_blocks = DMA_BLOCKS;
+    if (!dma_buf && (dma_buf = malloc(DMA_BLOCKS_MIN * BLOCK))) dma_blocks = DMA_BLOCKS_MIN;
+    if (!dma_buf) {
+        snprintf(dma_note, sizeof dma_note, "no %d MB of main memory for the copies", DMA_BLOCKS_MIN);
         return;
     }
     if (dma_state == DMA_UNTRIED) dma_check();
@@ -266,7 +286,7 @@ static void dma_end(void)
     }
 }
 
-/* Block b from the RSX's copy, up to DMA_BLOCKS blocks a copy while they
+/* Block b from the RSX's copy, up to dma_blocks blocks a copy while they
  * follow each other in RSX memory. 0 when the copy failed: the caller reads
  * the block through the mapping. A block whose copy differs from the
  * pattern is read again through the mapping, which records the errors; no
@@ -275,7 +295,7 @@ static int dma_read(mem_result *r, int p, int b)
 {
     if (b < dma_first || b >= dma_first + dma_n) {
         int n = 1;
-        while (n < DMA_BLOCKS && b + n < r->blocks && blk[b + n] == (uint8_t *)blk[b] + n * BLOCK) n++;
+        while (n < dma_blocks && b + n < r->blocks && blk[b + n] == (uint8_t *)blk[b] + n * BLOCK) n++;
         dma_n = 0;
         int rc = gfx_copy_to_main_job(blk[b], dma_buf, n * BLOCK);
         if (rc) { dma_failed("a copy failed", rc); return 0; }
