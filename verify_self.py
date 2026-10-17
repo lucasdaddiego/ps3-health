@@ -6,13 +6,13 @@
 The macOS ARM64 make_self crashed with a bus error after "self written in
 memory", so build.sh runs this before any pkg leaves the Mac. make_self writes
 the plaintext metadata key npdrm_keypair_d as the encrypted blob npdrm_keypair_e
-(PSL1GHT tools/geohot/oddkeys.h); with the plaintext, the rest of the metadata
-decrypts (AES-CTR). Then it checks what the console's loader checks: each
-segment's HMAC-SHA1 (random 64-byte key in the metadata, over the compressed
-plaintext) and the ECDSA signature over the plaintext header (fixed r, k, Da, n
-from PSL1GHT keys.h, so s = (z + r*Da) / k mod n is reproducible). With the
-ELF, every segment must also inflate to the ELF's own bytes, and the plaintext
-copy of the section headers must match.
+(PSL1GHT tools/geohot/include/oddkeys.h); with the plaintext, the rest of the
+metadata decrypts (AES-CTR). Then it checks what the console's loader checks:
+each segment's HMAC-SHA1 (random 64-byte key in the metadata, over the
+compressed plaintext) and the ECDSA signature over the plaintext header (fixed
+r, k, Da, n from PSL1GHT keys.h, so s = (z + r*Da) / k mod n is reproducible).
+With the ELF, every segment must also inflate to the ELF's own bytes, and the
+plaintext copy of the section headers must match.
 
 NOTICE: the key material (KEYPAIR_E, ERK, RIV, SIG_R, SIG_N, SIG_K, SIG_DA)
 belongs to PSL1GHT's tools (tools/geohot) and is not part of this repository
@@ -40,7 +40,7 @@ def load_keys(key_file=KEY_FILE):
             raw = tomllib.load(f)
     except FileNotFoundError:
         fail(f'key file {key_file} not found: copy the make_self_npdrm constants from PSL1GHT '
-             f'(tools/geohot keys.h and oddkeys.h) into it as hex strings, one per name '
+             f'(tools/geohot/include/keys.h and oddkeys.h) into it as hex strings, one per name '
              f'({", ".join(KEY_NAMES)}), or set PS3DEV_KEYS')
     except tomllib.TOMLDecodeError as e:
         fail(f'key file {key_file} is not valid TOML: {e}')

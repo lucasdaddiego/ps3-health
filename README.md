@@ -714,8 +714,8 @@ Then `build.sh`:
    ECDSA signature. The Sony key material it needs is not in this repository:
    the script reads it from `~/.local/share/ps3dev/keys.toml` (or `$PS3DEV_KEYS`),
    seven hex strings named `KEYPAIR_E`, `ERK`, `RIV`, `SIG_R`, `SIG_N`, `SIG_K`,
-   `SIG_DA`, copied from PSL1GHT's `tools/geohot` (`keys.h`, `oddkeys.h`). See
-   [NOTICE](NOTICE), item 5.
+   `SIG_DA`, copied from PSL1GHT's `tools/geohot/include` (`keys.h`, `oddkeys.h`).
+   See [NOTICE](NOTICE), item 5.
 
 `tools/preview/build.zsh` hands the app to ps3gfx's preview (the clone in
 `~/ps3dev/src/ps3gfx`, or `$PS3GFX`), which compiles it for the Mac against
