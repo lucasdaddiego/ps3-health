@@ -60,7 +60,7 @@ void trend_life_eta(const trend_rec *r, int n, trend_eta *e)
         if (i < n) end = i;
         if (i < n && first >= 0 && t < newest) { e->back++; continue; }
         if (last >= 0 && (i == n || !same_day(&r[last], &r[i]))) {   /* the day of last is over: its point */
-            double x = day_number(&r[last]) - d0, y = r[last].life;
+            double x = newest - d0, y = r[last].life;   /* newest: the day number of last */
             sx += x, sy += y, sxx += x * x, sxy += x * y;
             k++;
         }
@@ -71,7 +71,7 @@ void trend_life_eta(const trend_rec *r, int n, trend_eta *e)
         e->reads++;
     }
     if (end < 0) return;
-    e->days = (int)(day_number(&r[last]) - d0);
+    e->days = (int)(newest - d0);
     e->drop = r[first].life - r[last].life;
     if (r[end].life == 0) { e->state = TREND_ETA_ZERO; return; }
     if (end != last) { e->state = TREND_ETA_CLOCK; return; }   /* the newest read is one of those left out */

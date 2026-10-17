@@ -477,8 +477,10 @@ int phy_parse(const uint8_t *buf, phy_counters *o)
     while (off + 2 <= 510) {
         unsigned id = buf[off] | buf[off + 1] << 8;
         if ((id & 0x0FFF) == 0) break;       /* identifier 0 ends the list (the Dahua writes it with size bits set) */
-        int size = 2 << (((id >> 12) & 7) - 1);
-        if (size < 2 || size > 8 || off + 2 + size > 510) break;
+        unsigned code = (id >> 12) & 7;      /* 1, 2 or 3: 2, 4 or 8 bytes; 0 has no size */
+        if (code < 1 || code > 3) break;
+        int size = 1 << code;
+        if (off + 2 + size > 510) break;
         long long v = 0;
         for (int i = size - 1; i >= 0; i--) v = v << 8 | buf[off + 2 + i];
         switch (id & 0x0FFF) {

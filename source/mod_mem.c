@@ -11,7 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <ppu-lv2.h>
 #include <lv2/systime.h>
 #include <sys/memory.h>
 #include <ps3gfx/gfx.h>

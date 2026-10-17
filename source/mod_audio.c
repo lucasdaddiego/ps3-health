@@ -10,7 +10,6 @@
  * block the system reads. */
 #include <stdio.h>
 #include <string.h>
-#include <ppu-lv2.h>
 #include <lv2/systime.h>
 #include <sys/systime.h>
 #include <sys/thread.h>
@@ -56,7 +55,7 @@ static int fill_ok;                          /* the thread was created */
 static tone cur, next;                       /* cur: the fill thread's own; next: the UI thread's, handed over by the counts below */
 static volatile int next_seq;                /* the sounds played; the fill thread takes next when it changes */
 static volatile int stop_upto;               /* the sounds up to this one fade out */
-static volatile int now_done = 1;            /* the sound ended (the fill thread's tone_done) */
+static volatile int now_done_seq;           /* the count of the sound that ended (the fill thread's tone_done), -1 while one plays */
 static volatile float now_hz;                /* its frequency now */
 static volatile int quiet;                   /* the port ends: the fill thread cuts the sound (CUT_MS) and starts no other */
 
@@ -88,7 +87,8 @@ static void fill_thread(void *arg)
             }
             tone_fill(&cur, block_at(wr), AUDIO_BLOCK_SAMPLES);
             now_hz = (float)tone_freq(&cur);
-            now_done = (quiet || cur_seq == next_seq) && tone_done(&cur);
+            int ns = next_seq;               /* one read: a play() after it makes the stored count an old one */
+            now_done_seq = (quiet || cur_seq == ns) && tone_done(&cur) ? ns : -1;
         }
         sysUsleep(2000);
     }
@@ -98,7 +98,6 @@ static void fill_thread(void *arg)
 static void play(const tone *t)
 {
     next = *t;
-    now_done = 0;
     __sync_synchronize();
     next_seq++;
 }
@@ -183,7 +182,7 @@ void audio_end(void)
         quiet = 1;
         for (int i = 0, after = 0; i < 40; i++) {   /* the sleep first: the li r11 stays before its sc for tools/syscalls.py */
             sysUsleep(10000);
-            if (now_done && ++after >= 7) break;
+            if (now_done_seq == next_seq && ++after >= 7) break;
         }
         fill_on = 0;
         sysThreadJoin(fill_th, &ret);
@@ -248,7 +247,7 @@ static int ask(const tone *t, const char *head, const char *name, const char *qu
         double sec = (double)(sysGetSystemTime() - t0) / 1e6;
         if (t->len > 0) {                    /* the sweep: its frequency and its progress */
             float hz = now_hz;
-            if (now_done) text(MG, y + 160, F_MED, GREY, "Done: did you hear it all the way?");
+            if (now_done_seq == next_seq) text(MG, y + 160, F_MED, GREY, "Done: did you hear it all the way?");
             else if (hz >= 1000) text(MG, y + 160, F_MED | TNUM, BLUE, "%.1f kHz", hz / 1000);
             else text(MG, y + 160, F_MED | TNUM, BLUE, "%.0f Hz", hz);
             bar(MG, y + 220, lw - 32, 10, (float)(sec / SWEEP_S), BLUE);

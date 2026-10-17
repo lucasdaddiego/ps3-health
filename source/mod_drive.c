@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
-#include <ppu-lv2.h>
 #include <lv2/systime.h>
 #include <sys/file.h>
 #include <sys/thread.h>
@@ -364,7 +363,7 @@ static void tr_add(const char *line)
 /* trend.txt of this drive, read in the UI thread when the page draws after an
  * append: the head (the first line must name this drive, the second is the
  * first read), then at most the last 8 KB from the second line on. A longer
- * file loses the cut first line of its tail, as journal_load does. */
+ * file loses the cut first line of its tail. */
 static void trend_load(void)
 {
     static char buf[TREND_TAIL + 1];
@@ -412,17 +411,19 @@ int drive_life_eta(char *out, int n)
     trend_eta e;
     if (!D.probed || D.demo || !D.ata_ok || !D.have_smart) return 0;
     if (tr_seq != trend_seq) trend_load();
+    const trend_rec *r = tr;                 /* the summary page asks every frame: a copy only to add this read */
     int k = tr_n;
-    memcpy(all, tr, sizeof tr[0] * (size_t)k);
     if (D.trend_due) {
         struct tm tm;
         local_tm(&tm);
+        memcpy(all, tr, sizeof tr[0] * (size_t)k);
         memset(&all[k], 0, sizeof all[k]);
         all[k].year = tm.tm_year + 1900, all[k].month = tm.tm_mon + 1, all[k].day = tm.tm_mday;
         all[k].hour = tm.tm_hour, all[k].minute = tm.tm_min;
         all[k++].life = D.sum.life_left;
+        r = all;
     }
-    trend_life_eta(all, k, &e);
+    trend_life_eta(r, k, &e);
     trend_eta_text(&e, out, n);
     return 1;
 }
@@ -976,7 +977,6 @@ int mod_drive_open(void)
         int r = start_screen();
         if (r <= 0) return r;
         drive_close(&D);                     /* a refused IDENTIFY leaves the drive open; probe and demo start fresh */
-        armed = 0;
         if (r == 2) {
             if (drive_demo_load(&D)) {
                 memset(&D, 0, sizeof D);

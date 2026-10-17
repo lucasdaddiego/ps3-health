@@ -11,7 +11,6 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
-#include <ppu-lv2.h>
 #include <lv2/systime.h>
 #include <sys/systime.h>
 #include <net/net.h>

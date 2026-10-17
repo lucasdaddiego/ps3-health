@@ -6,7 +6,6 @@
  * Toshiba HDD product manuals; and, for the Maxio controller layout (Dahua
  * and other brands on MAS09xx/MAS11xx), the values seen on the test drive
  * (spare blocks, erase counts) that fit this layout and no other. */
-#include <string.h>
 #include "vendor.h"
 #include "smart.h"
 

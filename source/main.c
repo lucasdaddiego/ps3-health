@@ -1,9 +1,7 @@
 /* PS3 Health: the hardware of a PS3 checked from a HEN app. Eight modules
  * behind a home screen: Drive, Cooling, Controller, Display, Audio, Network,
  * Transfer, Memory. */
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include "app.h"
 #include <ps3gfx/ui.h>
 #include "report.h"
@@ -54,13 +52,11 @@ int main(void)
     while (!quit) {
         sel = home_screen(sel);
         if (sel < 0) break;
-        armed = 0;
         ui_module = modules[sel].name;
         int r = modules[sel].open();
         write_report();                      /* every module's result reaches the file */
         ui_module = NULL;
         ui_demo = 0;
-        armed = 0;
         if (r < 0) break;
     }
     return 0;                                /* exit() runs leave() */

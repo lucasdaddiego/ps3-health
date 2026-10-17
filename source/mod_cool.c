@@ -10,9 +10,7 @@
  * idle and rise out), and the soak test: 30 or 60 minutes of load turns and
  * memory turns by turns, one SPU group at a time, with the same stops. */
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <ppu-lv2.h>
 #include <lv2/systime.h>
 #include <sys/thread.h>
 #include "app.h"
@@ -313,10 +311,13 @@ static void draw_graph(float x, float y, float w, float h, int n, int span)
     float sx = gw * (load.step ? load.step : 2) / span;   /* a point per step: the turn changes' gaps keep x on time */
     for (int t = 0; t < 2; t++) {           /* one batch per curve, the Cell over the RSX */
         const short *v = t ? load.cpu : load.rsx;
+        float px = gx, py = graph_y(v[0], gy, gh);   /* each point once: it ends one segment and starts the next */
         batch_begin(t ? WHITE : BLUE);
-        for (int k = 1; k < n; k++)
-            if (v[k] >= 0 && v[k - 1] >= 0)  /* a failed read leaves a gap */
-                batch_line(gx + (k - 1) * sx, graph_y(v[k - 1], gy, gh), gx + k * sx, graph_y(v[k], gy, gh), 4);
+        for (int k = 1; k < n; k++) {
+            float kx = gx + k * sx, ky = graph_y(v[k], gy, gh);
+            if (v[k] >= 0 && v[k - 1] >= 0) batch_line(px, py, kx, ky, 4);   /* a failed read leaves a gap */
+            px = kx, py = ky;
+        }
         batch_end();
     }
     text_r(x + w - 24, y + 16, F_SMALL, WHITE, "Cell");

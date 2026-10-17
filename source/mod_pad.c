@@ -34,6 +34,22 @@ static float drift_pct(int k) { return fabsf(rest[k]) * 100.0f / 127.0f; }
 static float worst_drift(int stick) { return fmaxf(drift_pct(stick * 2), drift_pct(stick * 2 + 1)); }
 static u32 drift_color(float pct) { return pct < 4 ? GREEN : pct < 8 ? YELLOW : RED; }
 
+/* The cosine and the sine of each sector's middle angle, from -180 degrees:
+ * computed once, not 72 trig calls per stick and frame. */
+static float sec_cos[36], sec_sin[36];
+
+static void sector_table(void)
+{
+    static int done;
+    if (done) return;
+    for (int k = 0; k < 36; k++) {
+        float a = (k + 0.5f) * PI_F / 18.0f - PI_F;
+        sec_cos[k] = cosf(a);
+        sec_sin[k] = sinf(a);
+    }
+    done = 1;
+}
+
 /* A stick: its range circle, the reached shape, the cross hair and the dot. */
 static void stick(float cx, float cy, float r, int s, int show_shape)
 {
@@ -41,10 +57,10 @@ static void stick(float cx, float cy, float r, int s, int show_shape)
     disc(cx, cy, r, 0x0e1830ff);
     if (show_shape) {
         float pts[72];
+        sector_table();
         for (int k = 0; k < 36; k++) {
-            float a = (k + 0.5f) * PI_F / 18.0f - PI_F;
-            pts[k * 2] = cx + cosf(a) * maxr[s][k] * r / 127.0f;
-            pts[k * 2 + 1] = cy + sinf(a) * maxr[s][k] * r / 127.0f;
+            pts[k * 2] = cx + sec_cos[k] * maxr[s][k] * r / 127.0f;
+            pts[k * 2 + 1] = cy + sec_sin[k] * maxr[s][k] * r / 127.0f;
         }
         poly_fan(cx, cy, pts, 36, 0x4fd98250);
     }

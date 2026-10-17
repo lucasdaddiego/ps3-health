@@ -12,7 +12,6 @@
  * with one write of state.txt for the four tiles. */
 #include <stdio.h>
 #include <string.h>
-#include <ppu-lv2.h>
 #include <lv2/systime.h>
 #include <sys/thread.h>
 #include "app.h"
@@ -177,7 +176,6 @@ int quick_screen(void)
         r = verdict();
     }
     ui_module = NULL;
-    armed = 0;
     pressed = 0;                             /* the press that leaves acts nowhere else */
     return r;
 }

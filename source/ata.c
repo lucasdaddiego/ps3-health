@@ -627,10 +627,10 @@ int compat_body(const drive_state *d, char *out, int n)
  * file does not end in a line end (a cut write, a hand edit). Else the file
  * starts again with this drive's name: another drive, or no file yet, gets a
  * new file. A file that is there but does not open or read stays as it is,
- * and trend_rc shows the rc: fs_read_line gives -1 or 0 for a read error too,
- * and a failing drive can give one. No journal entry: the file calls of every
- * other write. The rc and the count are not in drive_state, so the self-test
- * poll's copy of D never writes them back. */
+ * and trend_rc shows the rc: fs_read_line gives -1 for a read error as for no
+ * file, and a failing drive can give one. No journal entry: the file calls of
+ * every other write. The rc and the count are not in drive_state, so the
+ * self-test poll's copy of D never writes them back. */
 int trend_rc, trend_seq;
 
 /* 1 when the last byte of trend.txt is not a line end. The calls of

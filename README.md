@@ -78,9 +78,18 @@ temperatures, the SPU rates, the sticks and the memory size are simulated.
 
 The app was tested on one console: a PS3 Super Slim on **HFW 4.93 with PS3HEN
 3.6.0** and a Dahua V800 1 TB SATA SSD. The table lists the versions tested on
-the console. The parts new in 2.2.0 (Audio, Network, the quick check, the wear
-trend, the paste estimate and the soak test) are checked in the host preview
-only until a 2.2.0 row is in the table.
+the console. 2.2.1 is 2.2.0 on ps3gfx cb788b4, the library's fixes of
+2026-10-17: a two-press button (SQUARE twice, R2 twice) fires only on its own
+button and any other button cancels it, a controller that goes away releases
+its buttons, and the freeze journal writes a failed record once more. The app
+drops its own resets of a two-press button, which the library now makes, and
+does less work per frame for the Controller's stick shapes, the Cooling curves
+and the wear trend line. Three fixes of its own: the USB copy takes the whole
+freeze journal (it kept the first 32 KB, the oldest records, since the
+journal became append-only), the sweep's "Done" belongs to the sound that
+plays (a fill that raced a new sound could show it at the start), and the
+SATA phy log's size code 0 ends the list without an undefined shift. It is
+checked in the host preview only until a 2.2.1 row is in the table.
 
 It is **not tested** on CFW (Evilnat, Rebug and others), on fat or slim models, on
 other firmware versions, or on original HDDs. On another setup, a drive command
@@ -743,7 +752,7 @@ Toolchain findings that cost the most time:
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push: the host test of
 the decoder, a compile and `--help` smoke of the Python scripts with the
 `syscalls.py` self-test, a check that `APP_VER` and `VERSION` in `sfo.xml` match
-`source/version.h` (2.2.0 is 02.20), and a pkg build on Linux with the same
+`source/version.h` (2.2.1 is 02.21), and a pkg build on Linux with the same
 `sdk_setup.sh` (the pkg is a workflow artifact) followed by the syscall audit of
 its ELF. The signed EBOOT is verified in CI only when the repository secret
 `PS3DEV_KEYS_TOML` holds the key file. A `v*` tag
