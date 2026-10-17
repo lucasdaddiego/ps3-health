@@ -16,7 +16,6 @@ typedef uint64_t u64;
 #define SYS_O_WRONLY O_WRONLY
 #define SYS_O_CREAT O_CREAT
 #define SYS_O_EXCL O_EXCL
-#define SYS_O_TRUNC O_TRUNC
 static int fail_open, fail_write, refused, opens, unlinks, writes, reads;
 static int journal_start(const char *name) { (void)name; return !refused; }
 static void journal_done(const char *name, s32 rc, int ok) { (void)name; (void)rc; (void)ok; }

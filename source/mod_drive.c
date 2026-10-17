@@ -151,7 +151,8 @@ static void draw_health(void)
     int h = smart_health(&D.s, D.have_stlog ? &D.log : NULL, D.sum.temp_limit, why, sizeof why);
     u32 hc = h == HEALTH_OK ? GREEN : h == HEALTH_WARN ? YELLOW : RED;
     u32 bg = h == HEALTH_OK ? 0x14402aff : h == HEALTH_WARN ? 0x4a3c0cff : 0x4c1616ff;
-    const char *word = h == HEALTH_OK ? "Health OK" : h == HEALTH_WARN ? "Health WARN" : "Health FAIL";
+    char word[16];
+    snprintf(word, sizeof word, "Health %s", health_text(h));
     float y = TOP + 92, w = text_w(F_MED, word) + 40;
     round_rect(MG, y, w, 50, 12, bg);
     text(MG + 20, y + 5, F_MED, hc, "%s", word);
@@ -208,13 +209,11 @@ static float kv_x, kv_w;
 static void kv(float y, const char *key, u32 color, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
 static void kv(float y, const char *key, u32 color, const char *fmt, ...)
 {
-    char v[320];
     va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(v, sizeof v, fmt, ap);
-    va_end(ap);
     text(MG + 32, y, F_BODY, GREY, "%s", key);
-    text_fit(kv_x, y, F_BODY, color, kv_w, "%s", v);
+    va_start(ap, fmt);
+    vtext_fit(kv_x, y, F_BODY, color, kv_w, fmt, ap);
+    va_end(ap);
 }
 
 static void draw_summary(void)
@@ -304,14 +303,7 @@ static void draw_summary(void)
         y += step;
     }
     if (D.have_prev) {
-        int j = 0, changed = 0;
-        dtext[0] = 0;
-        for (int k = 0; k < D.s.count; k++) {
-            long long dl;
-            if (!smart_delta(&D.s, &D.prev, D.s.a[k].id, &dl) || !dl) continue;
-            changed++;
-            if (j < (int)sizeof dtext) j += snprintf(dtext + j, sizeof dtext - j, "%s%u %+lld", j ? ", " : "", D.s.a[k].id, dl);
-        }
+        int changed = delta_text(&D.s, &D.prev, dtext, sizeof dtext);
         kv(y, "Since last read", changed ? BLUE : GREY, "%s: %s", D.prev_when, changed ? dtext : "no change");
     } else kv(y, "Since last read", GREY, "no previous read on this console");
     y += step + 12;
@@ -964,8 +956,8 @@ static void drive_tile(void)
         return;
     }
     int hl = smart_health(&D.s, D.have_stlog ? &D.log : NULL, D.sum.temp_limit, why, sizeof why);
-    if (D.sum.hours >= 0) snprintf(l1, sizeof l1, "Health %s, %d h", hl == HEALTH_OK ? "OK" : hl == HEALTH_WARN ? "WARN" : "FAIL", D.sum.hours);
-    else snprintf(l1, sizeof l1, "Health %s", hl == HEALTH_OK ? "OK" : hl == HEALTH_WARN ? "WARN" : "FAIL");
+    if (D.sum.hours >= 0) snprintf(l1, sizeof l1, "Health %s, %d h", health_text(hl), D.sum.hours);
+    else snprintf(l1, sizeof l1, "Health %s", health_text(hl));
     snprintf(l2, sizeof l2, "%.44s", D.id.model);
     state_set("drive", hl == HEALTH_OK ? DOT_OK : hl == HEALTH_WARN ? DOT_WARN : DOT_BAD, l1, l2);
 }
@@ -1033,7 +1025,7 @@ int drive_quick_end(char *line, int n)
         return DOT_WARN;
     }
     int hl = smart_health(&D.s, D.have_stlog ? &D.log : NULL, D.sum.temp_limit, why, sizeof why);
-    snprintf(line, n, "Health %s: %s", hl == HEALTH_OK ? "OK" : hl == HEALTH_WARN ? "WARN" : "FAIL", why);
+    snprintf(line, n, "Health %s: %s", health_text(hl), why);
     return hl == HEALTH_OK ? DOT_OK : hl == HEALTH_WARN ? DOT_WARN : DOT_BAD;
 }
 

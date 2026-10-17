@@ -90,7 +90,7 @@ static s32 ata_command(drive_state *d, uint16_t features, uint16_t count, uint16
     blk.command = command;
     blk.proto = proto;
     blk.in_out = DIR_READ;
-    blk.size = blk.arglen = len;
+    blk.size = len;
     u64 status = 0;
     memset(buf, 0, sizeof buf);
     return storage_execute_device_command(d->handle, LV1_ATA, &blk, 32, buf, len, &status);
@@ -112,7 +112,7 @@ static s32 read_log_ext(drive_state *d, uint8_t log, uint16_t page)
     blk.is_ext = 1;
     blk.proto = PROTO_PIO_IN;
     blk.in_out = DIR_READ;
-    blk.size = blk.arglen = 512;
+    blk.size = 512;
     u64 status = 0;
     memset(buf, 0, sizeof buf);
     s32 rc = storage_execute_device_command(d->handle, LV1_ATA, &blk, 32, buf, 512, &status);
@@ -517,10 +517,9 @@ void hours_text(int hours, char *out, int n)
     else snprintf(out, n, "%d h (%d d)", hours, hours / 24);
 }
 
-static const char *health_text(int h) { return h == HEALTH_OK ? "OK" : h == HEALTH_WARN ? "WARN" : "FAIL"; }
+const char *health_text(int h) { return h == HEALTH_OK ? "OK" : h == HEALTH_WARN ? "WARN" : "FAIL"; }
 
-/* The changed attributes since prev: "9 +3, 12 +2". 0 when nothing changed. */
-static int delta_text(const smart_data *now, const smart_data *prev, char *out, int n)
+int delta_text(const smart_data *now, const smart_data *prev, char *out, int n)
 {
     int j = 0, changed = 0;
     out[0] = 0;

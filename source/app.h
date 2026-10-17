@@ -79,7 +79,7 @@ typedef struct {
     const char *failed;                  /* the first call that failed or was not made (a journal name, group_still_up or group_not_destroyed); NULL when none */
     s32 rc;                              /* its rc */
     int skipped, frozen, declined;       /* that call was not made; it froze this console before; it was skipped at the prompt */
-    int ran, started, late, stuck;       /* the group started; the first reports within 2 s; one did not come; the group could not be stopped */
+    int ran, started, stuck;             /* the group started; the first reports within 2 s; the group could not be stopped */
     int terminated, joined;              /* the terminate was made (term_rc); the join returned (cause, status) */
     s32 term_rc;
     u32 cause, status;

@@ -41,7 +41,6 @@ typedef struct {
     int state;                               /* TREND_ETA_* */
     int months;                              /* OK: the months to 0 % */
     int days, drop, reads;                   /* the days from the first read with a life value to the last, the points lost, those reads */
-    int back;                                /* the reads left out: dated before an earlier one */
 } trend_eta;
 void trend_life_eta(const trend_rec *r, int n, trend_eta *e);
 /* The estimate, or why there is none, in one line: its length, as snprintf.

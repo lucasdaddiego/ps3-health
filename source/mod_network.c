@@ -352,13 +352,11 @@ int network_quick_end(char *line, int n)
 static float row(float x, float y, float kw, float w, const char *key, u32 c, const char *fmt, ...) __attribute__((format(printf, 7, 8)));
 static float row(float x, float y, float kw, float w, const char *key, u32 c, const char *fmt, ...)
 {
-    char v[96];
     va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(v, sizeof v, fmt, ap);
-    va_end(ap);
     text(x, y, F_BODY, GREY, "%s", key);
-    text_fit(x + kw, y, F_BODY, c, w - kw, "%s", v);
+    va_start(ap, fmt);
+    vtext_fit(x + kw, y, F_BODY, c, w - kw, fmt, ap);
+    va_end(ap);
     return y + 44;
 }
 

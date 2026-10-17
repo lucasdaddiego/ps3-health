@@ -319,11 +319,11 @@ int spu_up(const spu_names *f, u32 mode, spu_result *r)
     r->ran = 1;
     int missing;
     r->started = first_reports(&missing);
-    r->late = r->started < SPU_KIT_SPUS;
-    if (r->late) snprintf(r->why, sizeof r->why, "SPU %d did not report in %d s", missing, FIRST_US / 1000000);
-    if (r->late || !run_open) {                      /* stop() ends the run entry */
+    int late = r->started < SPU_KIT_SPUS;            /* one did not come */
+    if (late) snprintf(r->why, sizeof r->why, "SPU %d did not report in %d s", missing, FIRST_US / 1000000);
+    if (late || !run_open) {                         /* stop() ends the run entry */
         stop(r);
-        s32 st = r->late ? r->exit_status[missing] : -1;   /* read after the join (ls): it ended at once */
+        s32 st = late ? r->exit_status[missing] : -1;    /* read after the join (ls): it ended at once */
         if (st == SPU_KIT_EXIT_ARGS || st == SPU_KIT_EXIT_MODE)
             snprintf(r->why, sizeof r->why, "SPU %d ended with status 0x%x before its first report", missing, (unsigned)st);
         teardown();

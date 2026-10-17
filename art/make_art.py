@@ -17,7 +17,7 @@ line reads as one that passes behind the title. docs/icon.png is the same
 icon on a dark card, for the README.
 """
 import math, os, sys
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, '..', 'pkgfiles')

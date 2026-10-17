@@ -82,5 +82,8 @@ int cool_compat(char *out, int n, int detail);   /* mod_cool.c: the Cooling line
 int compat_title(const drive_state *d, char *out, int n);
 const char *writes_unit_text(int unit);
 void hours_text(int hours, char *out, int n);
+const char *health_text(int h);              /* HEALTH_*: "OK", "WARN", "FAIL" */
+/* The attributes changed since prev: "9 +3, 12 +2", cut at n. The count, 0 when nothing changed. */
+int delta_text(const smart_data *now, const smart_data *prev, char *out, int n);
 
 #endif

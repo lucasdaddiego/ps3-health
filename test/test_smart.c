@@ -498,9 +498,9 @@ int main(void)
         const int cl[5] = {60, 59, 52, 44, 43};
         for (int i = 0; i < 5; i++) { c[i].year = cd[i][0]; c[i].month = cd[i][1]; c[i].day = cd[i][2]; c[i].life = cl[i]; }
         trend_life_eta(c, 4, &e);
-        CHECK(e.state == TREND_ETA_OK && e.back == 1 && e.days == 59 && e.drop == 16 && e.reads == 3);
+        CHECK(e.state == TREND_ETA_OK && e.days == 59 && e.drop == 16 && e.reads == 3);
         trend_life_eta(c, 5, &e);
-        CHECK(e.state == TREND_ETA_CLOCK && e.back == 2 && e.days == 59);
+        CHECK(e.state == TREND_ETA_CLOCK && e.days == 59);
         trend_eta_text(&e, et, sizeof et);
         CHECK(!strcmp(et, "no estimate: the last read is dated before an earlier one (clock set back?)"));
         c[4].life = 0;                          /* life at 0 says more than the clock */

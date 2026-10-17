@@ -53,12 +53,12 @@ void trend_life_eta(const trend_rec *r, int n, trend_eta *e)
     int first = -1, last = -1, end = -1, k = 0;
     double sx = 0, sy = 0, sxx = 0, sxy = 0, d0 = 0, newest = 0;
     e->state = TREND_ETA_NO_LIFE;
-    e->months = e->days = e->drop = e->reads = e->back = 0;
+    e->months = e->days = e->drop = e->reads = 0;
     for (int i = 0; i <= n; i++) {
         if (i < n && r[i].life < 0) continue;
         double t = i < n ? day_number(&r[i]) : 0;
         if (i < n) end = i;
-        if (i < n && first >= 0 && t < newest) { e->back++; continue; }
+        if (i < n && first >= 0 && t < newest) continue;
         if (last >= 0 && (i == n || !same_day(&r[last], &r[i]))) {   /* the day of last is over: its point */
             double x = newest - d0, y = r[last].life;   /* newest: the day number of last */
             sx += x, sy += y, sxx += x * x, sxy += x * y;

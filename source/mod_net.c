@@ -27,8 +27,8 @@ enum { USB_NO_STICK = 1, USB_FROZEN, USB_NO_JOURNAL };
 static struct { int done, rc; double mb, wsec, rsec; char dir[32]; } usb;
 static struct { int done, rc, http, port; double bytes, sec; char host[96], path[160], note[96]; } dl;
 static struct { int done, rc; double bytes, sec; char note[96]; } lan;
-static int net_up, net_frozen;               /* net_frozen: the network start froze this console before */
-static int net_lib, net_mod, net_ctl;        /* 1 where netInitialize, the netctl module load, netCtlInit succeeded: net_end undoes only these */
+static int net_up, net_frozen;               /* net_up: netInitialize succeeded; net_frozen: the network start froze this console before */
+static int net_mod, net_ctl;                 /* 1 where the netctl module load, netCtlInit succeeded: net_end undoes only these and netInitialize (net_up) */
 static char my_ip[32];
 static char lan_msg[160];
 
@@ -55,7 +55,7 @@ void net_init(void)
         net_frozen = !journal_start("net_start");   /* 0 for a frozen or skipped entry */
         if (net_frozen) { snprintf(my_ip, sizeof my_ip, "not started"); return; }
         s32 rc = netInitialize();
-        if (rc == 0) net_up = net_lib = 1;
+        if (rc == 0) net_up = 1;
         if (!net_mod && sysModuleLoad(SYSMODULE_NETCTL) == 0) net_mod = 1;   /* libnetctl does not load its module itself */
         if (!net_ctl && netCtlInit() == 0) net_ctl = 1;
         net_addr();
@@ -108,9 +108,9 @@ void net_end(void)
 {
     sys_ppu_thread_t t;
     u64 ret;
-    if (!net_lib && !net_mod && !net_ctl) return;   /* never started, or ended already */
-    end_lib = net_lib, end_mod = net_mod, end_ctl = net_ctl;
-    net_lib = net_mod = net_ctl = net_up = 0;
+    if (!net_up && !net_mod && !net_ctl) return;    /* never started, or ended already */
+    end_lib = net_up, end_mod = net_mod, end_ctl = net_ctl;
+    net_up = net_mod = net_ctl = 0;
     if (!fs_ok) return;                              /* no journal, no call */
     if (!journal_start("net_end")) return;           /* 0: it froze this console at an exit before */
     end_done = 0;
@@ -361,23 +361,19 @@ static void net_tile(void)
 static void result(float x, float y, float w, u32 c, const char *fmt, ...) __attribute__((format(printf, 5, 6)));
 static void result(float x, float y, float w, u32 c, const char *fmt, ...)
 {
-    char v[96];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(v, sizeof v, fmt, ap);
+    vtext_fit(x + 32, y + TEST_RESULT_Y, F_MED, c, w - 64, fmt, ap);
     va_end(ap);
-    text_fit(x + 32, y + TEST_RESULT_Y, F_MED, c, w - 64, "%s", v);
 }
 
 static void detail(float x, float y, float w, int k, const char *fmt, ...) __attribute__((format(printf, 5, 6)));
 static void detail(float x, float y, float w, int k, const char *fmt, ...)
 {
-    char v[160];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(v, sizeof v, fmt, ap);
+    vtext_fit(x + 32, y + TEST_RESULT_Y + 52 + k * 38, F_BODY, GREY, w - 64, fmt, ap);
     va_end(ap);
-    text_fit(x + 32, y + TEST_RESULT_Y + 52 + k * 38, F_BODY, GREY, w - 64, "%s", v);
 }
 
 int mod_net_open(void)
