@@ -244,7 +244,7 @@ quick|all)   # R1 on the home screen: the intro, the steps running, the verdict;
     SAFE='160 90 1760 990' STATE= JOURNAL=$J_DONE scn quick_min "4:R1 12:SNAP=quick_min_intro 14:CROSS 2400:SNAP=quick_min_result 2401:EXIT" PV_PING=1 PV_MAXFRAMES=5000 ;|
 quick_stop|all)   # CIRCLE during the memory step: the network step is not run
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn quick_stop "4:R1 14:CROSS 30:CIRCLE 400:SNAP=quick_stop 401:EXIT" PV_PING=1 PV_MAXFRAMES=5000 ;|
-drive_life|all)   # the SSD at 91 % after 100, 97, 94 a month apart: about 31 months to 0 %; and with two days of reads: no estimate yet
+drive_life|all)   # the SSD at 91 % after 100, 97, 94 a month apart: about 30 months to 0 %; and with two days of reads: no estimate yet
     LD=$P/build/drive_life
     rm -rf $LD; mkdir -p $LD; cp $DRIVE/*.bin $LD/ 2>/dev/null
     ${PYTHON:-python3} -I - $LD/smart.bin <<'PY'
@@ -287,6 +287,27 @@ soak_stop|all)   # CIRCLE in the second turn (memory), at the smallest visible a
 soak_hot|all)   # the soak reaches 75 C in its first load turn and stops by itself
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn soak_hot "$COOL 50:R1 62:CROSS 3000:SNAP=soak_hot 3001:EXIT" PV_RISE=1 PV_TEMP_OFF=12
     grep -h -E "^(soak|stop|verdict)" $SBX/soak_hot/dev_hdd0/tmp/ps3_health/report-*.txt | tail -3 ;|
+cool_rate|all)   # slower SPUs (PV_HEAT_RATE=50 loops per microsecond): the rate on the screen and in the report
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_rate "$COOL 50:CROSS 1200:SNAP=cool_rate_load 1202:CIRCLE 1220:SNAP=cool_rate 1221:EXIT" PV_RISE=1 PV_HEAT_RATE=50
+    grep -h "^SPU leg" $SBX/cool_rate/dev_hdd0/tmp/ps3_health/report-*.txt | tail -1 ;|
+cool_warm|all)   # a load test 10 s after another one: a warm start, the paste estimate on the peak and the fan
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_warm "$COOL 50:CROSS 650:CIRCLE 670:CROSS 4900:CIRCLE 4920:SNAP=cool_warm 4921:EXIT" PV_RISE=1
+    grep -h "^paste" $SBX/cool_warm/dev_hdd0/tmp/ps3_health/report-*.txt | tail -1 ;|
+network_wifi_ok|all)   # Wi-Fi at 78 % on channel 6, the router in one frame, DNS 30 ms: no problem
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn network_wifi_ok "$NETW 22:CROSS 700:SNAP=network_wifi_ok 701:EXIT" PV_NET=wifi PV_PING=1 PV_DNS_MS=30
+    grep -h -E "^(device|verdict)" $SBX/network_wifi_ok/dev_hdd0/tmp/ps3_health/report-*.txt | tail -2 ;|
+network_silent|all)   # the router answers nothing (PV_PING=none): three ICMP echoes, then TCP connects, every one lost
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn network_silent "$NETW 22:CROSS 2400:SNAP=network_silent 2402:CIRCLE 2410:SNAP=home_network_silent 2411:EXIT" PV_PING=none
+    grep -h -E "^(ping|verdict)" $SBX/network_silent/dev_hdd0/tmp/ps3_health/report-*.txt | tail -2 ;|
+net_info_frozen|all)   # the netctl reads froze before: not made again, no connection data, and CROSS runs no test
+    SAFE=$DEF_SAFE STATE= JOURNAL=$'start net_info\n' scn net_info_frozen "$NETW 20:SNAP=net_info_frozen 22:CROSS 40:SNAP=net_info_frozen_cross 42:CIRCLE 50:EXIT" PV_PING=1
+    grep -h "^connection" $SBX/net_info_frozen/dev_hdd0/tmp/ps3_health/report-*.txt ;|
+quick_nonet|all)   # the network start froze before: the quick check's network step is not run, no red, its tile stays
+    SAFE=$DEF_SAFE STATE= JOURNAL="${J_DONE}froze net_start"$'\n' scn quick_nonet "4:R1 14:CROSS 2400:SNAP=quick_nonet 2402:CIRCLE 2410:SNAP=home_quick_nonet 2411:EXIT" PV_MAXFRAMES=5000
+    cut -d'|' -f1,2,4,5 $SBX/quick_nonet/dev_hdd0/tmp/ps3_health/state.txt ;|
+audio_open|all)   # TRIANGLE after the left answer: the right side not answered, a yellow result and tile
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn audio_open "$AUDIO 18:CROSS 40:CROSS 50:TRIANGLE 60:SNAP=audio_open 62:CIRCLE 70:SNAP=home_audio_open 71:EXIT"
+    grep -h "^left" $SBX/audio_open/dev_hdd0/tmp/ps3_health/report-*.txt | tail -1 ;|
 esac
 ${PYTHON:-python3} -I - "$OUT" <<'PY'
 import glob, os, sys

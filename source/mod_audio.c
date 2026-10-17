@@ -27,6 +27,7 @@
 #define SWEEP_S 12
 #define BLOCKS AUDIO_BLOCK_16
 #define AHEAD 8                              /* blocks written ahead of the read: 8 x 256 samples, about 43 ms */
+#define CUT_MS 40                            /* the fade out of the sound that plays when the port ends */
 #define CH_MAX 8
 
 /* The eight channels of the port, in the order of the system's 8-channel
@@ -57,25 +58,29 @@ static volatile int next_seq;                /* the sounds played; the fill thre
 static volatile int stop_upto;               /* the sounds up to this one fade out */
 static volatile int now_done = 1;            /* the sound ended (the fill thread's tone_done) */
 static volatile float now_hz;                /* its frequency now */
+static volatile int quiet;                   /* the port ends: the fill thread cuts the sound (CUT_MS) and starts no other */
 
 static float *block_at(u32 b) { return (float *)(uintptr_t)cfg.audioDataStart + b * (u32)a_ch * AUDIO_BLOCK_SAMPLES; }
 
 /* Fills the blocks from the last written one up to AHEAD past the block the
- * system reads; a write that fell behind starts again after it. At each
+ * system reads. The write is never more than AHEAD ahead, so a distance
+ * over AHEAD (or 0) means the read passed the write (the thread stalled for
+ * AHEAD blocks or more): the write starts again after the read. At each
  * block: a stop fades the sound out, and a new sound starts once the last
  * one ended, so an answer never cuts a beep (a click). */
 static void fill_thread(void *arg)
 {
     (void)arg;
     u32 wr = 1;
-    int cur_seq = next_seq, cur_stopped = 0;
+    int cur_seq = next_seq, cur_stopped = 0, cur_cut = 0;
     while (fill_on) {
         u32 rd = (u32)(*(volatile u64 *)(uintptr_t)cfg.readIndex % BLOCKS);
         u32 dist = (wr + BLOCKS - rd) % BLOCKS;
-        if (dist == 0) wr = (rd + 1) % BLOCKS, dist = 1;
+        if (dist == 0 || dist > AHEAD) wr = (rd + 1) % BLOCKS, dist = 1;
         for (; dist < AHEAD; dist++, wr = (wr + 1) % BLOCKS) {
+            if (quiet && !cur_cut) { tone_cut(&cur, TONE_RATE * CUT_MS / 1000); cur_cut = 1; }
             if (!cur_stopped && stop_upto - cur_seq >= 0) { tone_stop(&cur); cur_stopped = 1; }
-            if (cur_seq != next_seq && tone_done(&cur)) {
+            if (!quiet && cur_seq != next_seq && tone_done(&cur)) {
                 __sync_synchronize();
                 cur = next;
                 cur_seq = next_seq;
@@ -83,7 +88,7 @@ static void fill_thread(void *arg)
             }
             tone_fill(&cur, block_at(wr), AUDIO_BLOCK_SAMPLES);
             now_hz = (float)tone_freq(&cur);
-            now_done = cur_seq == next_seq && tone_done(&cur);
+            now_done = (quiet || cur_seq == next_seq) && tone_done(&cur);
         }
         sysUsleep(2000);
     }
@@ -137,20 +142,23 @@ static void job_up(void)
 }
 
 /* 1 when the port plays: the start (behind the counter, once), then the fill
- * thread. A start that froze before shows no job screen and runs nothing. */
+ * thread. A start that froze before shows no job screen and runs nothing;
+ * after SQUARE twice it runs again. A port left open by an end that froze
+ * before is played again as it is. */
 static int audio_up(void)
 {
     if (!a_started) {
-        if (journal_state("audio_start") == J_FROZEN) a_frozen = 1;
-        else run_job("Starting the audio", job_up);
+        a_frozen = journal_state("audio_start") == J_FROZEN;
+        if (!a_frozen) run_job("Starting the audio", job_up);
     }
     if (!a_started) return 0;
     if (!fill_ok) {
         memset(&cur, 0, sizeof cur);
         cur.channels = a_ch;                 /* silence until the first sound */
         cur.len = 0;
-        cur.stop = -1;
+        cur.stop = cur.cut = -1;
         stop_upto = next_seq;
+        quiet = 0;
         fill_on = 1;
         fill_ok = sysThreadCreate(&fill_th, fill_thread, NULL, 900, 0x4000, THREAD_JOINABLE, "audio") == 0;
         if (!fill_ok) fill_on = 0;
@@ -158,23 +166,31 @@ static int audio_up(void)
     return fill_ok;
 }
 
-/* The end: the fade out, a wait until the ring holds silence (AHEAD blocks
- * and a margin, about 100 ms), the thread's end, then the port stop, its
- * close, the library's end and the module unload, each only where its start
- * succeeded. One journaled call. No journal (no writable app folder): the
- * port never opened, the module stays closed. */
+/* The end: the sound that plays fades out in CUT_MS (a sweep's own fade is
+ * 0.5 s), the port plays the faded blocks and some silence (the fade written,
+ * then 70 ms: AHEAD blocks are 43 ms; 400 ms at most), the thread ends and
+ * the whole ring is zeroed; then the port stop, its close, the library's
+ * end and the module unload, each only where its start succeeded. One
+ * journaled call. An end that froze this console before is not made: the
+ * port stays open and silent, the flags stay, and a later test in this
+ * session plays on it (no second start, no second audioInit). No journal
+ * (no writable app folder): the port never opened, the module stays closed. */
 void audio_end(void)
 {
     u64 ret;
     if (!a_mod && !a_init && !a_open) return;    /* never started, or ended already */
     if (fill_ok) {
-        hush();
-        for (int i = 0; i < 10; i++) sysUsleep(10000);   /* the sleep first: the li r11 stays before its sc for tools/syscalls.py */
+        quiet = 1;
+        for (int i = 0, after = 0; i < 40; i++) {   /* the sleep first: the li r11 stays before its sc for tools/syscalls.py */
+            sysUsleep(10000);
+            if (now_done && ++after >= 7) break;
+        }
         fill_on = 0;
         sysThreadJoin(fill_th, &ret);
         fill_ok = 0;
     }
-    if (!journal_start("audio_end")) { a_mod = a_init = a_open = a_started = 0; return; }   /* it froze this console at an exit before */
+    if (a_started) memset((void *)(uintptr_t)cfg.audioDataStart, 0, (size_t)BLOCKS * (size_t)a_ch * AUDIO_BLOCK_SAMPLES * sizeof(float));
+    if (!journal_start("audio_end")) return;   /* it froze this console at an exit before: the port stays as it is */
     s32 rc = 0, r;
     if (a_started && (r = audioPortStop(port)) != 0 && rc == 0) rc = r;
     if (a_open && (r = audioPortClose(port)) != 0 && rc == 0) rc = r;
@@ -334,7 +350,18 @@ static int any_not(void)
     return 0;
 }
 
-static const char *ans_text(int a) { return a == ANS_HEARD ? "heard" : a == ANS_NOT ? "not heard" : "no answer"; }
+static const char *ans_text(int a) { return a == ANS_HEARD ? "heard" : a == ANS_NOT ? "not heard" : "not answered"; }
+
+/* A test stopped with TRIANGLE before its last answer: no pass, yellow, as
+ * Memory's stopped test. */
+static int lr_open(void) { return lr_ran && (lr[0] == ANS_NONE || lr[1] == ANS_NONE); }
+static int walk_open(void)
+{
+    int asked;
+    heard_count(walk, CH_MAX, &asked);
+    return walk_ran && asked < CH_MAX;
+}
+static int sweep_open(void) { return sweep_ran && sweep_ans == ANS_NONE; }
 
 /* "Left and right heard", "Right not heard", "Neither heard" */
 static void lr_line(char *s, int n)
@@ -344,7 +371,7 @@ static void lr_line(char *s, int n)
     else if (lr[0] == ANS_NOT && lr[1] == ANS_NOT) snprintf(s, n, "Neither side heard");
     else if (lr[0] == ANS_NOT) snprintf(s, n, "Left not heard");
     else if (lr[1] == ANS_NOT) snprintf(s, n, "Right not heard");
-    else snprintf(s, n, "Left and right: stopped");
+    else snprintf(s, n, "Left and right: not answered");
 }
 
 static void audio_tile(void)
@@ -356,11 +383,12 @@ static void audio_tile(void)
     l2[0] = 0;
     if (walk_ran) {
         int h = heard_count(walk, CH_MAX, &asked);
-        j += snprintf(l2 + j, sizeof l2 - j, "walk %d of %d heard", h, asked);
+        if (asked < CH_MAX) j += snprintf(l2 + j, sizeof l2 - j, "walk %d of %d answered", asked, CH_MAX);
+        else j += snprintf(l2 + j, sizeof l2 - j, "walk %d of %d heard", h, asked);
     }
     if (sweep_ran && j < (int)sizeof l2) j += snprintf(l2 + j, sizeof l2 - j, "%ssweep %s", j ? ", " : "", ans_text(sweep_ans));
     if (!l2[0]) snprintf(l2, sizeof l2, "walk and sweep not tested");
-    state_set("audio", any_not() ? DOT_WARN : DOT_OK, l1, l2);
+    state_set("audio", any_not() || lr_open() || walk_open() || sweep_open() ? DOT_WARN : DOT_OK, l1, l2);
 }
 
 /* The note under the cards: why the port did not play, or its channels. */
@@ -378,6 +406,7 @@ static void result_line(float x, float y, float w, u32 c, const char *s) { text_
 int mod_audio_open(void)
 {
     if (!fs_ok) return 0;                    /* no journal, no audio call: the home screen says why */
+    if (!a_started) a_frozen = journal_state("audio_start") == J_FROZEN;   /* SQUARE twice on the home screen clears it */
     int r = 0;
     while (1) {
         read_pad();
@@ -397,7 +426,7 @@ int mod_audio_open(void)
         test_card(x, y, w, h, BTN_CROSS, "Left and right", "A beep on the left speaker, then on the right. Each beeps until you answer.");
         if (lr_ran) {
             lr_line(s, sizeof s);
-            result_line(x, y, w, lr[0] == ANS_NOT || lr[1] == ANS_NOT ? YELLOW : lr[0] == ANS_HEARD && lr[1] == ANS_HEARD ? GREEN : GREY, s);
+            result_line(x, y, w, lr[0] == ANS_HEARD && lr[1] == ANS_HEARD ? GREEN : YELLOW, s);
             text_fit(x + 32, y + TEST_RESULT_Y + 52, F_BODY, GREY, w - 64, "left %s, right %s", ans_text(lr[0]), ans_text(lr[1]));
         } else result_line(x, y, w, DIM, "Not tested");
         x += w + 32;
@@ -408,17 +437,16 @@ int mod_audio_open(void)
         } else if (walk_ran) {
             n = heard_count(walk, CH_MAX, &asked);
             snprintf(s, sizeof s, "%d of %d heard", n, asked);
-            result_line(x, y, w, n < asked ? YELLOW : asked ? GREEN : GREY, s);
+            result_line(x, y, w, n < asked || asked < CH_MAX ? YELLOW : GREEN, s);
             int line = 0;
             for (int k = 0; k < CH_MAX && line < 3; k++)
                 if (walk[k] == ANS_NOT) text_fit(x + 32, y + TEST_RESULT_Y + 52 + 38 * line++, F_BODY, GREY, w - 64, "%s not heard", spk_name[k]);
-            if (asked < CH_MAX && line < 3) text_fit(x + 32, y + TEST_RESULT_Y + 52 + 38 * line, F_BODY, GREY, w - 64, "stopped after %d", asked);
+            if (asked < CH_MAX && line < 3) text_fit(x + 32, y + TEST_RESULT_Y + 52 + 38 * line, F_BODY, GREY, w - 64, "%d not answered", CH_MAX - asked);
         } else result_line(x, y, w, DIM, "Not tested");
         x += w + 32;
         test_card(x, y, w, h, BTN_SQUARE, "Sweep", "One tone from 20 Hz to 20 kHz in 12 s on both front speakers, low to high.");
         if (sweep_ran) {
-            result_line(x, y, w, sweep_ans == ANS_NOT ? YELLOW : sweep_ans == ANS_HEARD ? GREEN : GREY,
-                        sweep_ans == ANS_HEARD ? "Heard" : sweep_ans == ANS_NOT ? "Not heard" : "Stopped");
+            result_line(x, y, w, sweep_ans == ANS_HEARD ? GREEN : YELLOW, sweep_ans == ANS_HEARD ? "Heard" : sweep_ans == ANS_NOT ? "Not heard" : "Not answered");
             text_fit(x + 32, y + TEST_RESULT_Y + 52, F_BODY, GREY, w - 64, "at %d dBFS, fade in and out", LEVEL_DB);
         } else result_line(x, y, w, DIM, "Not tested");
         port_note();

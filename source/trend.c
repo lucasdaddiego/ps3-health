@@ -43,25 +43,38 @@ static double day_number(const trend_rec *r)
     return era * 146097.0 + doe - 719468 + (r->hour * 60 + r->minute) / 1440.0;
 }
 
+static int same_day(const trend_rec *a, const trend_rec *b) { return a->year == b->year && a->month == b->month && a->day == b->day; }
+
+/* The reads in file order, those with a life value. One dated before the
+ * newest so far is left out (the clock was set back), so the days never run
+ * backwards; the last read of each day is its point on the line. */
 void trend_life_eta(const trend_rec *r, int n, trend_eta *e)
 {
-    int first = -1, last = -1, k = 0;
-    double sx = 0, sy = 0, sxx = 0, sxy = 0, d0 = 0;
+    int first = -1, last = -1, end = -1, k = 0;
+    double sx = 0, sy = 0, sxx = 0, sxy = 0, d0 = 0, newest = 0;
     e->state = TREND_ETA_NO_LIFE;
-    e->months = e->days = e->drop = e->reads = 0;
-    for (int i = 0; i < n; i++) {
-        if (r[i].life < 0) continue;
-        if (first < 0) { first = i; d0 = day_number(&r[i]); }
+    e->months = e->days = e->drop = e->reads = e->back = 0;
+    for (int i = 0; i <= n; i++) {
+        if (i < n && r[i].life < 0) continue;
+        double t = i < n ? day_number(&r[i]) : 0;
+        if (i < n) end = i;
+        if (i < n && first >= 0 && t < newest) { e->back++; continue; }
+        if (last >= 0 && (i == n || !same_day(&r[last], &r[i]))) {   /* the day of last is over: its point */
+            double x = day_number(&r[last]) - d0, y = r[last].life;
+            sx += x, sy += y, sxx += x * x, sxy += x * y;
+            k++;
+        }
+        if (i == n) break;
+        if (first < 0) { first = i; d0 = t; }
+        newest = t;
         last = i;
-        double x = day_number(&r[i]) - d0, y = r[i].life;
-        sx += x, sy += y, sxx += x * x, sxy += x * y;
-        k++;
+        e->reads++;
     }
-    e->reads = k;
-    if (k == 0) return;
+    if (end < 0) return;
     e->days = (int)(day_number(&r[last]) - d0);
     e->drop = r[first].life - r[last].life;
-    if (r[last].life == 0) { e->state = TREND_ETA_ZERO; return; }
+    if (r[end].life == 0) { e->state = TREND_ETA_ZERO; return; }
+    if (end != last) { e->state = TREND_ETA_CLOCK; return; }   /* the newest read is one of those left out */
     if (e->days < TREND_ETA_DAYS) { e->state = TREND_ETA_SHORT; return; }
     double den = k * sxx - sx * sx, slope = den > 0 ? (k * sxy - sx * sy) / den : 0;   /* points a day */
     if (e->drop < 1 || slope >= 0) { e->state = TREND_ETA_NO_DROP; return; }
@@ -84,6 +97,7 @@ int trend_eta_text(const trend_eta *e, char *out, int n)
         if (e->reads == 1) return snprintf(out, n, "no estimate yet: one read, it needs %d days of reads", TREND_ETA_DAYS);
         return snprintf(out, n, "no estimate yet: %d day%s of reads, it needs %d", e->days, e->days == 1 ? "" : "s", TREND_ETA_DAYS);
     case TREND_ETA_NO_DROP: return snprintf(out, n, "no estimate yet: life left has not dropped in %d days", e->days);
+    case TREND_ETA_CLOCK: return snprintf(out, n, "no estimate: the last read is dated before an earlier one (clock set back?)");
     default: return snprintf(out, n, "no estimate: life left is at 0 %%");
     }
 }

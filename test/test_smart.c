@@ -343,29 +343,70 @@ int main(void)
     CHECK(trend_parse("2026-12-31 23:59 -1 255 -1 0 0", &tr) == 0 && tr.day == 31 && tr.temp == 255 && tr.life == 0);
     CHECK(trend_parse("2026-01-01 00:00 0 -1 0 -1 0", &tr) == 0 && tr.month == 1 && tr.hour == 0 && tr.minute == 0);
 
-    /* issue form URL */
+    /* the issue link: a blank issue, title first, then the fields (body is what the mobile app fills) */
     char enc[64], url[2400];
     CHECK(url_encode("a b/c=d~", enc, sizeof enc) == 14 && !strcmp(enc, "a%20b%2Fc%3Dd~"));
     CHECK(url_encode("abcdefgh", enc, 6) == 2 && !strcmp(enc, "ab"));   /* bounded: room for one %XX and the NUL */
     const form_field f[] = {{"firmware", "4.93 (Europe)"}, {"health", "OK\nhours 921"}};
-    int n = issue_form_url("compat-report.yml", "Compat: X on 4.93", f, 2, url, sizeof url);
+    int n = issue_form_url("Compat: X on 4.93", f, 2, url, sizeof url);
     CHECK(n > 0 && n == (int)strlen(url));
-    CHECK(!strncmp(url, APP_REPO "/issues/new?template=compat-report.yml&title=Compat%3A%20X%20on%204.93", 
-                   strlen(APP_REPO) + 58));
-    CHECK(strstr(url, "&firmware=4.93%20%28Europe%29&health=OK%0Ahours%20921") != NULL);
-    CHECK(issue_form_url("t.yml", "title", f, 2, url, 40) == -1);   /* does not fit */
-    /* no template: a blank issue, title first, then body (what the mobile app fills) */
+    CHECK(!strcmp(url, APP_REPO "/issues/new?title=Compat%3A%20X%20on%204.93&firmware=4.93%20%28Europe%29&health=OK%0Ahours%20921"));
+    CHECK(issue_form_url("title", f, 2, url, 40) == -1);   /* does not fit */
     const form_field b[] = {{"body", "console: x\nfirmware: 4.93"}};
-    n = issue_form_url(NULL, "Compat: X on 4.93", b, 1, url, sizeof url);
+    n = issue_form_url("Compat: X on 4.93", b, 1, url, sizeof url);
     CHECK(n > 0 && !strcmp(url, APP_REPO "/issues/new?title=Compat%3A%20X%20on%204.93&body=console%3A%20x%0Afirmware%3A%204.93"));
     /* a real-size link fits a QR code at version 25 */
     char big[700];
     memset(big, 'x', sizeof big - 1); big[sizeof big - 1] = 0;
-    const form_field g[] = {{"health", big}};
-    n = issue_form_url("compat-report.yml", "t", g, 1, url, sizeof url);
+    const form_field g[] = {{"body", big}};
+    n = issue_form_url("t", g, 1, url, sizeof url);
     static uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(25)], tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(25)];
     CHECK(n > 700 && qrcodegen_encodeText(url, tmp, qr, qrcodegen_Ecc_LOW, 1, 25, qrcodegen_Mask_AUTO, true));
     CHECK(qrcodegen_getSize(qr) >= 21 && qrcodegen_getSize(qr) <= 117);
+    {                                        /* the limit itself: 1273 bytes encode, 1274 do not */
+        static char lim[COMPAT_QR_BYTES + 2];
+        memset(lim, 'a', COMPAT_QR_BYTES); lim[COMPAT_QR_BYTES] = 0;
+        CHECK(qrcodegen_encodeText(lim, tmp, qr, qrcodegen_Ecc_LOW, 1, 25, qrcodegen_Mask_AUTO, true));
+        lim[COMPAT_QR_BYTES] = 'a'; lim[COMPAT_QR_BYTES + 1] = 0;
+        CHECK(!qrcodegen_encodeText(lim, tmp, qr, qrcodegen_Ecc_LOW, 1, 25, qrcodegen_Mask_AUTO, true));
+    }
+    /* Help's link with the Cooling line (compat_fit_url): the line in full, its short form, or none, so that the
+     * link stays within the QR code; at a long health reason (smart_health's why holds up to 255 characters) */
+    {
+        static char body[1024], why[256], full[200], brief[200], u2[2400];
+        heat_report hr = {FAMILY_SUPER, 58, 55, 67, 62, 70, 65, 9, 25, 33, 30, 1805, 1, 1, 1};
+        heat_compat_line(&hr, 1, why, sizeof why);
+        snprintf(full, sizeof full, "cooling: %s\n", why);
+        heat_compat_line(&hr, 0, why, sizeof why);
+        snprintf(brief, sizeof brief, "cooling: %s\n", why);
+        const char *const alt[2] = {full, brief};
+        for (int len = 40; len <= 255; len += 215) {   /* a short reason, then the longest */
+            why[0] = 0;
+            while ((int)strlen(why) + 42 <= len) strcat(why, "197 Current Pending Sector Count = 65535, ");
+            while ((int)strlen(why) < len) strcat(why, "x");
+            snprintf(body, sizeof body,
+                     "console: CECH-____, HEN/CFW ____ (you fill these in)\nfirmware: 4.93, app %s\n"
+                     "drive: Samsung SSD 870 EVO 1TB, fw SVT02B6Q, 1000 GB, SSD, SATA 3 (max 3)\n"
+                     "result: 609 rc 0x0, 600 rc 0x0, IDENTIFY ok, SMART ok, log ok, last self-test completed without error at 12345 h, "
+                     "file write 25 / read 63 MB/s, error log 0, GPL logs stats ok/phy ok\n"
+                     "health: WARN (%s)\nhours 1 year 152 days, cycles 12345, temp 45 C\n"
+                     "5=4294967295 187=4294967295 196=4294967295 197=4294967295 198=4294967295 199=4294967295 \n", APP_VERSION, why);
+            int base = (int)strlen(body);
+            n = compat_fit_url("Compat: Samsung SSD 870 EVO 1TB on 4.93", body, sizeof body, alt, 2, url, sizeof url, COMPAT_QR_BYTES);
+            CHECK(n > 0 && n <= COMPAT_QR_BYTES && qrcodegen_encodeText(url, tmp, qr, qrcodegen_Ecc_LOW, 1, 25, qrcodegen_Mask_AUTO, true));
+            int used = !strcmp(body + base, full) ? 0 : !strcmp(body + base, brief) ? 1 : 2;
+            for (int k = 0; k < used; k++) {     /* each richer line left out would not have fitted */
+                const form_field fb[] = {{"body", body}};
+                body[base] = 0; strcat(body, alt[k]);
+                CHECK(issue_form_url("Compat: Samsung SSD 870 EVO 1TB on 4.93", fb, 1, u2, sizeof u2) > COMPAT_QR_BYTES);
+            }
+            if (len == 40) CHECK(used == 0);  /* a short reason: the full line */
+            else CHECK(used > 0);             /* the longest: the line shrinks or goes */
+        }
+        memset(body, ' ', sizeof body - 1);  /* even the body alone does not fit: every space takes 3 bytes */
+        body[sizeof body - 1] = 0;
+        CHECK(compat_fit_url("t", body, sizeof body, alt, 2, url, sizeof url, COMPAT_QR_BYTES) == -1);
+    }
 
     /* life left as a time (trend_life_eta) */
     {
@@ -414,6 +455,31 @@ int main(void)
         r[5].life = 89;
         trend_life_eta(r, 6, &e);
         CHECK(e.days == 90 && e.reads == 2 && e.state == TREND_ETA_OVER);
+        /* one point a day: the last read of the day; an earlier read of that day, lower or higher, changes nothing */
+        trend_rec q[4];
+        trend_eta e2;
+        memset(q, 0, sizeof q);
+        const int qd[4][4] = {{1, 1, 12, 60}, {2, 1, 12, 52}, {3, 1, 10, 50}, {3, 1, 12, 44}};   /* month, day, hour, life */
+        for (int i = 0; i < 4; i++) { q[i].year = 2026; q[i].month = qd[i][0]; q[i].day = qd[i][1]; q[i].hour = qd[i][2]; q[i].life = qd[i][3]; }
+        trend_life_eta(q, 4, &e);
+        trend_rec q3[3] = {q[0], q[1], q[3]};
+        trend_life_eta(q3, 3, &e2);
+        CHECK(e.state == TREND_ETA_OK && e2.state == TREND_ETA_OK && e.months == e2.months && e.reads == 4 && e2.reads == 3);
+        /* the console clock set back: a read dated before an earlier one is left out; as the last read, no estimate */
+        trend_rec c[5];
+        memset(c, 0, sizeof c);
+        const int cd[5][3] = {{2026, 1, 1}, {2000, 1, 1}, {2026, 2, 1}, {2026, 3, 1}, {2000, 1, 2}};
+        const int cl[5] = {60, 59, 52, 44, 43};
+        for (int i = 0; i < 5; i++) { c[i].year = cd[i][0]; c[i].month = cd[i][1]; c[i].day = cd[i][2]; c[i].life = cl[i]; }
+        trend_life_eta(c, 4, &e);
+        CHECK(e.state == TREND_ETA_OK && e.back == 1 && e.days == 59 && e.drop == 16 && e.reads == 3);
+        trend_life_eta(c, 5, &e);
+        CHECK(e.state == TREND_ETA_CLOCK && e.back == 2 && e.days == 59);
+        trend_eta_text(&e, et, sizeof et);
+        CHECK(!strcmp(et, "no estimate: the last read is dated before an earlier one (clock set back?)"));
+        c[4].life = 0;                          /* life at 0 says more than the clock */
+        trend_life_eta(c, 5, &e);
+        CHECK(e.state == TREND_ETA_ZERO);
     }
 
     /* heat.c: the families, the rise, the paste verdict, the halving */
@@ -433,22 +499,49 @@ int main(void)
         CHECK(heat_rise(c, 40, 2) == -1);
         CHECK(heat_rise(c, 40, 0) == -1);
         heat_paste p;
-        heat_paste_judge(FAMILY_SUPER, 55, 71, 11, 49, &p);   /* the author's console, about */
-        CHECK(p.verdict == PASTE_OK && p.over == 0 && p.measured == 4);
-        heat_paste_judge(FAMILY_SUPER, 55, 74, 11, 49, &p);
-        CHECK(p.verdict == PASTE_CHECK && p.over == 2);
-        heat_paste_judge(FAMILY_SUPER, 61, 71, 6, 25, &p);    /* a warm start: idle 61, peak 71 as in 2.2.0-rc1's soak */
+        heat_paste_judge(FAMILY_SUPER, 55, 71, 11, 49, 0, &p);   /* the author's console, about */
         CHECK(p.verdict == PASTE_OK && p.over == 0);
-        heat_paste_judge(FAMILY_SUPER, 64, 74, 15, -1, &p);   /* no fan read: three values still judge */
-        CHECK(p.verdict == PASTE_LIKELY && p.over == 7 && p.measured == 3);
-        heat_paste_judge(FAMILY_SUPER, 55, 70, -1, -1, &p);   /* under a minute */
+        heat_paste_judge(FAMILY_SUPER, 55, 74, 11, 49, 0, &p);
+        CHECK(p.verdict == PASTE_CHECK && p.over == 2);
+        heat_paste_judge(FAMILY_SUPER, 61, 71, 6, 25, 0, &p);    /* idle 61 as in 2.2.0-rc1's soak, right after a test: over the 59 C limit */
+        CHECK(p.verdict == PASTE_CHECK && p.over == 1);
+        heat_paste_judge(FAMILY_SUPER, 61, 71, 6, 25, HEAT_WARM, &p);   /* the same as a warm start: idle and rise left out */
+        CHECK(p.verdict == PASTE_OK && p.over == 0 && strstr(heat_paste_text(&p), "Rest about 10 minutes"));
+        heat_paste_judge(FAMILY_SUPER, 58, 70, 20, -1, HEAT_WARM, &p);  /* a steep rise after a warm start does not count */
+        CHECK(p.verdict == PASTE_OK && p.over == 0);
+        heat_paste_judge(FAMILY_SUPER, 64, 74, 15, 65, HEAT_WARM, &p);  /* warm, and the peak and the fan above */
+        CHECK(p.verdict == PASTE_LIKELY && p.over == 10 && strstr(heat_paste_text(&p), "Warm start"));
+        heat_paste_judge(FAMILY_SUPER, 58, 70, -1, -1, HEAT_WARM, &p);  /* warm still needs a minute of test */
+        CHECK(p.verdict == PASTE_NONE);
+        heat_paste_judge(FAMILY_SUPER, 64, 74, 15, -1, 0, &p);   /* no fan read: three values still judge */
+        CHECK(p.verdict == PASTE_LIKELY && p.over == 7);
+        heat_paste_judge(FAMILY_SUPER, 55, 70, -1, -1, 0, &p);   /* under a minute */
         CHECK(p.verdict == PASTE_NONE && strstr(heat_paste_text(&p), "a minute"));
-        heat_paste_judge(FAMILY_SUPER, 55, 70, -1, 40, &p);   /* the fan does not stand in for the rise */
-        CHECK(p.verdict == PASTE_NONE && p.measured == 3);
-        heat_paste_judge(FAMILY_UNKNOWN, 55, 70, 10, 40, &p);
+        heat_paste_judge(FAMILY_SUPER, 55, 70, -1, 40, 0, &p);   /* the fan does not stand in for the rise */
+        CHECK(p.verdict == PASTE_NONE);
+        heat_paste_judge(FAMILY_SUPER, 55, 75, -1, 40, HEAT_HOT_EARLY, &p);   /* the stop at 40 s: likely, with no rise */
+        CHECK(p.verdict == PASTE_LIKELY && (p.over & 2) && strstr(heat_paste_text(&p), "first minute"));
+        heat_paste_judge(FAMILY_SUPER, 62, 75, -1, 40, HEAT_HOT_EARLY | HEAT_WARM, &p);   /* warm or not */
+        CHECK(p.verdict == PASTE_LIKELY && strstr(heat_paste_text(&p), "first minute"));
+        heat_paste_judge(FAMILY_UNKNOWN, 55, 75, -1, 40, HEAT_HOT_EARLY, &p);   /* no model: no estimate */
         CHECK(p.verdict == PASTE_NONE && strstr(heat_paste_text(&p), "L1"));
-        heat_paste_judge(FAMILY_FAT, 60, 74, 14, 70, &p);     /* at the limits: not above */
+        heat_paste_judge(FAMILY_FAT, 62, 74, 14, 70, 0, &p);     /* at the limits: not above */
         CHECK(p.verdict == PASTE_OK);
+        CHECK(!heat_idle_hot(FAMILY_SUPER, 62) && heat_idle_hot(FAMILY_SUPER, 63));   /* the idle warning: 59 C and 3 */
+        CHECK(!heat_idle_hot(FAMILY_NONE, 69) && heat_idle_hot(FAMILY_UNKNOWN, 70) && !heat_idle_hot(FAMILY_FAT, -1));
+        CHECK(heat_warm_start(599, -1, -1) && !heat_warm_start(600, -1, -1) && !heat_warm_start(-1, -1, 60));   /* 10 min of rest */
+        CHECK(heat_warm_start(-1, 56, 60) && !heat_warm_start(-1, 56, 59) && !heat_warm_start(-1, 56, -1));    /* 3 C over the open */
+        heat_report hr = {FAMILY_SUPER, 58, 55, 67, 62, 67, 62, 9, 25, 33, 0, 120, 0, 1, 0};
+        char hl[160];
+        CHECK(heat_compat_line(&hr, 1, hl, sizeof hl) == (int)strlen(hl));
+        CHECK(!strcmp(hl, "Super slim, Cell/RSX C, idle 58/55, peak 67/62, rise 9/min, fan 25>33%, load 120 s, 6 SPUs"));
+        heat_compat_line(&hr, 0, hl, sizeof hl);
+        CHECK(!strcmp(hl, "Super slim, Cell/RSX C, idle 58/55, peak 67/62, rise 9/min"));
+        hr.family = FAMILY_UNKNOWN; hr.rsx0 = hr.rise = hr.fan0 = hr.fan_end = -1;   /* not read: left out, no -1 */
+        hr.cpu_max = 70; hr.soak = 30; hr.seconds = 1805; hr.stopped = hr.warm = 1;
+        heat_compat_line(&hr, 1, hl, sizeof hl);
+        CHECK(!strcmp(hl, "model not set, Cell/RSX C, idle 58/-, peak 67/62, max 70/62, soak 1805 s (stopped), 6 SPUs, warm start"));
+        CHECK(heat_compat_line(&hr, 1, hl, 12) == 11 && !strcmp(hl, "model not s"));   /* cut at the buffer */
         short h[5] = {50, 52, -1, -1, 49};
         CHECK(heat_halve(h, 5) == 3 && h[0] == 52 && h[1] == -1 && h[2] == 49);
         short g[4] = {-1, 60, 61, -1};
@@ -544,6 +637,19 @@ int main(void)
         CHECK(tone_done(&tn) && fabs(tone_freq(&tn) - 20000) < 1e-6);
         float last = buf[(TONE_RATE - 1) * 2];
         CHECK(fabsf(last) < 1e-4);              /* faded out at the end */
+        tone_sweep(&tn, 2, 3, 20, 20000, 10, -18);   /* the exit's cut inside the sweep's 0.5 s fade out: silent in 40 ms, no click */
+        tone_fill(&tn, buf, TONE_RATE * 2);
+        float before = buf[(TONE_RATE * 2 - 1) * 2];
+        tone_stop(&tn);
+        tone_fill(&tn, buf, TONE_RATE / 10);
+        before = buf[(TONE_RATE / 10 - 1) * 2];
+        tone_cut(&tn, TONE_RATE / 25);
+        tone_cut(&tn, 10);                      /* a second cut changes nothing */
+        CHECK(!tone_done(&tn) && tn.cut_len == TONE_RATE / 25);
+        tone_fill(&tn, buf, TONE_RATE / 20);
+        step = fabsf(buf[0] - before);
+        for (int i = 1; i < TONE_RATE / 20; i++) if (fabsf(buf[i * 2] - buf[(i - 1) * 2]) > step) step = fabsf(buf[i * 2] - buf[(i - 1) * 2]);
+        CHECK(step < 0.0075 && tone_done(&tn) && buf[(TONE_RATE / 25) * 2] == 0 && buf[(TONE_RATE / 20 - 1) * 2] == 0);
     }
 
     printf(fails ? "%d check(s) failed\n" : "all checks passed\n", fails);

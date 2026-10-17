@@ -30,6 +30,8 @@ typedef struct {
 } tile_state;
 void state_load(void);
 void state_set(const char *key, int dot, const char *l1, const char *l2);
+void state_hold(void);             /* state_set keeps its tiles in memory until state_flush: one write for several tiles */
+void state_flush(void);
 
 void boot_mark(const char *name);  /* one line in APP_DIR/boot.txt (boot.c); "main" begins a start */
 

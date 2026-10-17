@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <ppu-lv2.h>
+#include <lv2/systime.h>
 #include <ps3gfx/gfx.h>
 #include "app.h"
 #include <ps3gfx/ui.h>
@@ -24,6 +26,7 @@ typedef struct {
     long errors;
     uintptr_t err_addr[MAX_ERR];
     uint32_t err_want[MAX_ERR], err_got[MAX_ERR];
+    long long w_bytes, r_bytes, w_us, r_us;  /* the writes and the reads with their compare, for the speeds in the report */
 } mem_result;
 
 static mem_result xdr, vram;
@@ -39,8 +42,77 @@ static void note_error(mem_result *r, uintptr_t addr, uint32_t want, uint32_t go
     r->errors++;
 }
 
-/* Pattern p of a word at index i in block b: address based, its inverse, an
- * alternating word, and a linear congruential sequence. */
+/* The four patterns of a word at index i in block b: address based, its
+ * inverse, an alternating word, and a linear congruential sequence. With
+ * a = (b << 20) + 4 i: a ^ 0xA5A5A5A5, its inverse, 0xAAAAAAAA and
+ * 0x55555555 by turns, (a + 0x9E3779B9) * 2654435761.
+ * MEM_LINES 1: the patterns as running values, one loop for the four with
+ * no switch per word, and dcbz on each whole 128-byte line (the PPU's cache
+ * line) before its 32 words, so a store does not first read the line from
+ * memory. 0: the loops of 2.1.0, pattern() per word and no dcbz, to compare
+ * the speeds on a console: the report gives both in MB/s. */
+#ifndef MEM_LINES
+#define MEM_LINES 1
+#endif
+#define CACHE_LINE 128
+
+#if MEM_LINES
+/* Word i of block b in pattern p is x ^ m, then x += dx and m ^= t: the
+ * address grows by 4, the alternating word flips, and the sequence's next
+ * value adds 4 x its multiplier. */
+typedef struct { uint32_t x, dx, m, t; } run;
+
+static run run_at(int p, int b, unsigned i)
+{
+    uint32_t a = ((uint32_t)b << 20) + i * 4;
+    run r = {a, 4, 0xA5A5A5A5u, 0};
+    if (p == 1) r.m = ~0xA5A5A5A5u;
+    else if (p == 2) r.x = r.dx = 0, r.m = (i & 1) ? 0x55555555u : 0xAAAAAAAAu, r.t = 0xFFFFFFFFu;
+    else if (p == 3) r.x = (a + 0x9E3779B9u) * 2654435761u, r.dx = 4 * 2654435761u, r.m = 0;
+    return r;
+}
+
+#ifdef __PPU__
+#define ZERO_LINE(p) __asm__ volatile("dcbz 0,%0" : : "r"(p) : "memory")
+#else
+#define ZERO_LINE(p) ((void)(p))             /* the host preview */
+#endif
+
+/* n words of pattern p, from word i of block b, into w (user memory: dcbz
+ * needs a cached line, so never the RSX mapping). Only a line that w holds
+ * whole is zeroed: a block from malloc need not start on a line. */
+static void put_words(uint32_t *w, unsigned n, int p, int b, unsigned i)
+{
+    run r = run_at(p, b, i);
+    unsigned k = 0;
+    while (k < n) {
+        unsigned end = k + 1;
+        if (!((uintptr_t)(w + k) & (CACHE_LINE - 1)) && n - k >= CACHE_LINE / 4) {
+            ZERO_LINE(w + k);
+            end = k + CACHE_LINE / 4;
+        }
+        for (; k < end; k++, r.x += r.dx, r.m ^= r.t) w[k] = r.x ^ r.m;
+    }
+}
+
+/* The compare of n words read at w with pattern p from word i of block b:
+ * word k's address is at + 4 k. Each wrong one goes to res (NULL: counted
+ * only), the first one's address to *first when first is not NULL. The
+ * errors. */
+static long check_words(const uint32_t *w, unsigned n, int p, int b, unsigned i, uintptr_t at, mem_result *res, unsigned long *first)
+{
+    run r = run_at(p, b, i);
+    long errors = 0;
+    for (unsigned k = 0; k < n; k++, r.x += r.dx, r.m ^= r.t) {
+        uint32_t want = r.x ^ r.m;
+        if (w[k] == want) continue;
+        if (res) note_error(res, at + k * 4, want, w[k]);
+        if (first && !errors) *first = (unsigned long)(at + k * 4);
+        errors++;
+    }
+    return errors;
+}
+#else
 static uint32_t pattern(int p, int b, unsigned i)
 {
     uint32_t a = ((uint32_t)b << 20) + i * 4;
@@ -52,10 +124,31 @@ static uint32_t pattern(int p, int b, unsigned i)
     }
 }
 
+static void put_words(uint32_t *w, unsigned n, int p, int b, unsigned i)
+{
+    for (unsigned k = 0; k < n; k++) w[k] = pattern(p, b, i + k);
+}
+
+static long check_words(const uint32_t *w, unsigned n, int p, int b, unsigned i, uintptr_t at, mem_result *res, unsigned long *first)
+{
+    long errors = 0;
+    for (unsigned k = 0; k < n; k++) {
+        uint32_t want = pattern(p, b, i + k);
+        if (w[k] == want) continue;
+        if (res) note_error(res, at + k * 4, want, w[k]);
+        if (first && !errors) *first = (unsigned long)(at + k * 4);
+        errors++;
+    }
+    return errors;
+}
+#endif
+
 /* The user memory is written and compared in place. The RSX mapping goes
  * through 64 KB chunks: a pattern chunk is built in user memory and copied
  * in, and the block is copied out before the compare, because one word at a
- * time on that mapping is far slower than a memcpy. */
+ * time on that mapping is far slower than a memcpy. (The RSX's own DMA into
+ * main memory would be faster, but the command ring is ps3gfx's own: no
+ * call of the library puts a transfer in it.) */
 #define CHUNK 65536
 static uint32_t chunk[CHUNK / 4] __attribute__((aligned(128)));
 static uint32_t readback[CHUNK / 4] __attribute__((aligned(128)));
@@ -63,38 +156,46 @@ static uint32_t readback[CHUNK / 4] __attribute__((aligned(128)));
 static void write_block(int p, int b, int direct)
 {
     if (direct) {
-        uint32_t *w = blk[b];
-        for (unsigned i = 0; i < BLOCK / 4; i++) w[i] = pattern(p, b, i);
+        put_words(blk[b], BLOCK / 4, p, b, 0);
         return;
     }
     for (unsigned off = 0; off < BLOCK; off += CHUNK) {
-        for (unsigned i = 0; i < CHUNK / 4; i++) chunk[i] = pattern(p, b, off / 4 + i);
+        put_words(chunk, CHUNK / 4, p, b, off / 4);
         memcpy((uint8_t *)blk[b] + off, chunk, CHUNK);
     }
 }
 
 static void check_block(mem_result *r, int p, int b, int direct)
 {
+    if (direct) {
+        check_words(blk[b], BLOCK / 4, p, b, 0, (uintptr_t)blk[b], r, NULL);
+        return;
+    }
     for (unsigned off = 0; off < BLOCK; off += CHUNK) {
-        const uint32_t *w = direct ? (const uint32_t *)((uint8_t *)blk[b] + off) : readback;
-        if (!direct) memcpy(readback, (uint8_t *)blk[b] + off, CHUNK);
-        for (unsigned i = 0; i < CHUNK / 4; i++) {
-            uint32_t want = pattern(p, b, off / 4 + i);
-            if (w[i] != want) note_error(r, (uintptr_t)blk[b] + off + i * 4, want, w[i]);
-        }
+        memcpy(readback, (uint8_t *)blk[b] + off, CHUNK);
+        check_words(readback, CHUNK / 4, p, b, off / 4, (uintptr_t)blk[b] + off, r, NULL);
     }
 }
 
+/* passes 1 (the quick check): patterns 0 and 1 by turns, block by block,
+ * so every bit of a word is written as 0 and as 1 in the same time. Each
+ * block's write and check is timed, for the speeds in the report. */
 static void run_passes(mem_result *r, int passes, int direct)
 {
     int total = passes * r->blocks * 2, step = 0;
     for (int p = 0; p < passes && !job_cancel; p++) {
         for (int b = 0; b < r->blocks && !job_cancel; b++, step++) {
-            write_block(p, b, direct);
+            s64 t = sysGetSystemTime();
+            write_block(passes == 1 ? b & 1 : p, b, direct);
+            r->w_us += sysGetSystemTime() - t;
+            r->w_bytes += BLOCK;
             job_set_percent(step * 100 / total);
         }
         for (int b = 0; b < r->blocks && !job_cancel; b++, step++) {
-            check_block(r, p, b, direct);
+            s64 t = sysGetSystemTime();
+            check_block(r, passes == 1 ? b & 1 : p, b, direct);
+            r->r_us += sysGetSystemTime() - t;
+            r->r_bytes += BLOCK;
             job_set_percent(step * 100 / total);
         }
         if (!job_cancel) r->passes = p + 1;
@@ -146,18 +247,9 @@ static void job_vram(void) { vram_run(2); }
 long mem_soak_pass(void *const *blocks, int n, int p, volatile int *stop, unsigned long *first)
 {
     long errors = 0;
-    for (int b = 0; b < n && !*stop; b++) {
-        uint32_t *w = blocks[b];
-        for (unsigned i = 0; i < BLOCK / 4; i++) w[i] = pattern(p, b, i);
-    }
-    for (int b = 0; b < n && !*stop; b++) {
-        const uint32_t *w = blocks[b];
-        for (unsigned i = 0; i < BLOCK / 4; i++)
-            if (w[i] != pattern(p, b, i)) {
-                if (!errors) *first = (unsigned long)(uintptr_t)&w[i];
-                errors++;
-            }
-    }
+    for (int b = 0; b < n && !*stop; b++) put_words(blocks[b], BLOCK / 4, p, b, 0);
+    for (int b = 0; b < n && !*stop; b++)
+        errors += check_words(blocks[b], BLOCK / 4, p, b, 0, (uintptr_t)blocks[b], NULL, errors ? NULL : first);
     return errors;
 }
 
@@ -376,10 +468,10 @@ int mod_mem_open(void)
         title();
         float w = (SW - 2 * MG - 64) / 3, h = BOTTOM - TOP - 56 > 560 ? 560 : BOTTOM - TOP - 56;   /* two wrong words fit */
         mem_card(MG, TOP, w, h, BTN_CROSS, "User memory (XDR)",
-                 "All the user memory the app can get, about 200 MB of 256: four patterns written and read back. About a minute.",
+                 "All the user memory the app can get, about 200 MB of 256: four patterns written and read back. A few seconds.",
                  &xdr);
         mem_card(MG + w + 32, TOP, w, h, BTN_TRIANGLE, "RSX memory (GDDR3)",
-                 "The free graphics memory, through its slow mapping: two patterns, a few minutes. Kept until the app exits.", &vram);
+                 "The free graphics memory, through its slow mapping: two patterns, under a minute. Kept until the app exits.", &vram);
         ls_card(MG + 2 * (w + 32), TOP, w, h);
         text_fit(MG, TOP + h + 24, F_BODY, GREY, SW - 2 * MG, "%s",
                  "Each test writes only to memory the app allocated or to an SPU's own local store. A wrong word is a memory error.");
@@ -430,11 +522,15 @@ int mem_quick_end(char *line, int n)
     return bad ? DOT_BAD : stopped ? DOT_WARN : DOT_OK;
 }
 
-static void report_result(const mem_result *r, const char *name)
+/* The speeds: MB/s over the time of the writes and of the reads with their
+ * compare (MEM_LINES says which loops), for a console run to compare. */
+static void report_result(const mem_result *r, const char *name, const char *how)
 {
     if (!r->done) return;
-    rep_out("%s: %d MB in 1 MB blocks, %d passes%s, %ld errors\n", name, r->blocks, r->passes, r->cancelled ? " (stopped)" : "",
-            r->errors);
+    rep_out("%s: %d MB in 1 MB blocks, %d passes%s, %ld errors", name, r->blocks, r->passes, r->cancelled ? " (stopped)" : "", r->errors);
+    if (r->w_us > 0 && r->r_us > 0)
+        rep_out("; write %.0f MB/s, read and compare %.0f MB/s (%s)", (double)r->w_bytes / r->w_us, (double)r->r_bytes / r->r_us, how);
+    rep_out("\n");
     for (int k = 0; k < r->errors && k < MAX_ERR; k++)
         rep_out("  error at 0x%08lx: wrote 0x%08x, read 0x%08x\n", (unsigned long)r->err_addr[k], r->err_want[k], r->err_got[k]);
 }
@@ -443,7 +539,7 @@ void mod_mem_report(void)
 {
     if (!xdr.done && !vram.done && ls.state == LS_NONE) return;
     rep_out("--- memory ---\n");
-    report_result(&xdr, "user memory (XDR)");
-    report_result(&vram, "RSX memory (GDDR3)");
+    report_result(&xdr, "user memory (XDR)", MEM_LINES ? "running patterns, dcbz per line" : "pattern() per word");
+    report_result(&vram, "RSX memory (GDDR3)", MEM_LINES ? "running patterns, 64 KB copies through the mapping" : "pattern() per word, 64 KB copies through the mapping");
     ls_report();
 }

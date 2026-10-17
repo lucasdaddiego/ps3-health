@@ -34,13 +34,14 @@
 
 static struct {
     int done;                                /* read once */
-    s32 rc;                                  /* the device read's rc: netctl not started or refused */
+    int frozen;                              /* the reads froze this console before (net_info): not made */
+    s32 rc;                                  /* the device read's rc: netctl not started or refused; -1 not started or frozen */
     int device, link, link_type, mtu, rssi, channel, ip_config;   /* -1: not read */
     char ip[16], mask[16], router[16], dns1[16], dns2[16];
 } info;
 enum { MODE_NONE, MODE_ICMP, MODE_TCP };
 static struct {
-    int done, mode, port, n, quick, cancelled;
+    int done, mode, port, n, cancelled;
     int us[PINGS];                           /* microseconds, -1 lost */
     ping_stats st;
     char why_tcp[80];                        /* why the TCP connect and not ICMP */
@@ -58,14 +59,18 @@ static s32 get(s32 code, union net_ctl_info *i)
 }
 
 /* Each value on its own; a refused one stays -1 or empty. No read of the
- * MAC address (NET_CTL_INFO_ETHER_ADDR), the BSSID or the SSID. */
+ * MAC address (NET_CTL_INFO_ETHER_ADDR), the BSSID or the SSID. The reads
+ * are one journaled call, net_info: reads that froze the console are not
+ * made again. */
 static void read_info(void)
 {
     union net_ctl_info i;
     memset(&info, 0, sizeof info);
     info.device = info.link = info.link_type = info.mtu = info.rssi = info.channel = info.ip_config = -1;
     info.done = 1;
-    if (!net_is_up()) { info.rc = -1; return; }
+    info.rc = -1;
+    if (!net_is_up()) return;
+    if (!journal_start("net_info")) { info.frozen = 1; return; }   /* 0 for a frozen entry */
     info.rc = get(NET_CTL_INFO_DEVICE, &i);
     if (info.rc == 0) info.device = (int)i.device;
     if (get(NET_CTL_INFO_LINK, &i) == 0) info.link = (int)i.link;
@@ -81,6 +86,7 @@ static void read_info(void)
     if (get(NET_CTL_INFO_DEFAULT_ROUTE, &i) == 0) snprintf(info.router, sizeof info.router, "%.15s", i.default_route);
     if (get(NET_CTL_INFO_PRIMARY_DNS, &i) == 0) snprintf(info.dns1, sizeof info.dns1, "%.15s", i.primary_dns);
     if (get(NET_CTL_INFO_SECONDARY_DNS, &i) == 0) snprintf(info.dns2, sizeof info.dns2, "%.15s", i.secondary_dns);
+    journal_done("net_info", info.rc, info.rc == 0);
 }
 
 static int have_ip(void) { return info.ip[0] && strcmp(info.ip, "0.0.0.0"); }
@@ -214,7 +220,6 @@ static void tcp_run(in_addr_t ip, int count)
 static void ping_run(int count)
 {
     memset(&pg, 0, sizeof pg);
-    pg.quick = count < PINGS;
     in_addr_t ip = info.router[0] ? inet_addr(info.router) : (in_addr_t)-1;
     if (ip == (in_addr_t)-1 || ip == 0) return;   /* no router address: no ping (pg.done stays 0) */
     if (!icmp_run(ip, count)) tcp_run(ip, count);
@@ -269,9 +274,16 @@ static void job_test(void)
 
 /* ---- tile, quick check ---------------------------------------------------- */
 
+/* Why there is no connection data, for the tile and the quick check. */
+static const char *no_info(void)
+{
+    return net_start_frozen() ? "Network start froze before" : info.frozen ? "Network info froze before" : !net_is_up() ? "Network not started"
+                                                                                                         : "Connection not read";
+}
+
 static void link_line(char *s, int n)
 {
-    if (!info.done || info.rc) snprintf(s, n, "%s", net_start_frozen() ? "Network start froze before" : "Network not started");
+    if (!info.done || info.rc) snprintf(s, n, "%s", no_info());
     else if (info.device == NET_CTL_DEVICE_WIRELESS) {
         if (info.channel >= 0 && info.rssi >= 0) snprintf(s, n, "Wi-Fi ch %d, signal %d %%", info.channel, info.rssi);
         else snprintf(s, n, "Wi-Fi");
@@ -307,12 +319,15 @@ static void network_tile(void)
     state_set("network", level_dot(), l1, l2);
 }
 
+/* A network that did not start (or froze before), or reads that froze
+ * before: the step runs no test and gives no verdict, as the module. */
 void network_quick(void)
 {
     net_init();
     read_info();
     memset(&pg, 0, sizeof pg);
     dns.done = 0;
+    if (!net_is_up() || info.frozen) { level = -1; return; }
     if (have_ip()) ping_run(QUICK_PINGS);
     judge();
 }
@@ -320,6 +335,12 @@ void network_quick(void)
 int network_quick_end(char *line, int n)
 {
     char a[48], b[64];
+    if (level < 0) {                         /* no tile change, no dot */
+        snprintf(line, n, "Not run: %s.", net_start_frozen() ? "the network start froze this console before"
+                                          : info.frozen      ? "reading the connection data froze this console before"
+                                                             : "the network did not start");
+        return DOT_NONE;
+    }
     link_line(a, sizeof a);
     ping_line(b, sizeof b);
     snprintf(line, n, "%s; %s", a, b);
@@ -350,6 +371,8 @@ static void draw_info(float x, float y, float w, float h)
     if (!info.done || info.rc) {
         text_wrap(cx, y + 8, F_BODY, YELLOW, cw, 3,
                   net_start_frozen() ? "The network start froze this console before: no network call runs. SQUARE twice on the home screen clears the journal."
+                  : info.frozen      ? "Reading the connection data froze this console before: not read again. SQUARE twice on the home screen clears the journal."
+                  : net_is_up()      ? "The system did not give the connection data."
                                      : "The network did not start: no connection data.");
         return;
     }
@@ -357,7 +380,7 @@ static void draw_info(float x, float y, float w, float h)
     y += 6;
     y = row(cx, y, kw, cw, "Device", WHITE, "%s", info.device == NET_CTL_DEVICE_WIRELESS ? "Wi-Fi (802.11b/g)" : info.device == NET_CTL_DEVICE_WIRED ? "Cable (Ethernet)" : "not read");
     if (info.device == NET_CTL_DEVICE_WIRELESS) {
-        if (info.rssi >= 0) y = row(cx, y, kw, cw, "Signal", info.rssi < 40 ? YELLOW : WHITE, "%d %% on channel %d", info.rssi, info.channel);
+        if (info.rssi >= 0) y = row(cx, y, kw, cw, "Signal", info.rssi < PING_RSSI_CHECK ? YELLOW : WHITE, "%d %% on channel %d", info.rssi, info.channel);
         else y = row(cx, y, kw, cw, "Signal", GREY, "not read");
     } else {
         if (info.link == NET_CTL_LINK_DISCONNECTED) y = row(cx, y, kw, cw, "Link", YELLOW, "no link: check the cable");
@@ -372,7 +395,7 @@ static void draw_info(float x, float y, float w, float h)
     else snprintf(s, sizeof s, "%s", info.dns1[0] ? info.dns1 : "none");
     y = row(cx, y, kw, cw, "DNS servers", WHITE, "%s", s);
     if (dns.done && y + line_h(F_BODY) <= bottom) {
-        if (dns.ms >= 0) row(cx, y, kw, cw, "DNS lookup", dns.ms > 300 ? YELLOW : WHITE, "%d ms for " DNS_NAME, dns.ms);
+        if (dns.ms >= 0) row(cx, y, kw, cw, "DNS lookup", dns.ms > PING_DNS_CHECK_MS ? YELLOW : WHITE, "%d ms for " DNS_NAME, dns.ms);
         else row(cx, y, kw, cw, "DNS lookup", YELLOW, "failed for " DNS_NAME);
     }
 }
@@ -386,16 +409,18 @@ static void draw_ping(float x, float y, float w, float h)
     float top = heading(cx, y + 22, "ROUTER PING");
     if (!pg.done) {
         text_wrap(cx, top + 8, F_BODY, GREY, cw, 3,
-                  have_ip() || !info.done ? "CROSS sends 20 pings to the router and looks up " DNS_NAME "." : "No address: no router to ping.");
+                  have_ip() || !info.done ? "CROSS sends 20 pings to the router and looks up " DNS_NAME "."
+                  : info.rc               ? "No connection data: no router to ping."
+                                          : "No address: no router to ping.");
         return;
     }
     const ping_stats *p = &pg.st;
     if (p->got) {
-        float ex = text(cx, top + 6, F_LARGE | TNUM, p->avg_us > 20000 ? YELLOW : GREEN, "%.1f ms", p->avg_us / 1000.0);
+        float ex = text(cx, top + 6, F_LARGE | TNUM, p->avg_us > PING_AVG_CHECK_US ? YELLOW : GREEN, "%.1f ms", p->avg_us / 1000.0);
         text(ex + 16, top + 6 + base_dy(F_LARGE, F_BODY), F_BODY, GREY, "on average");
         text_fit(cx, top + 82, F_BODY, WHITE, cw, "min %.1f, max %.1f, jitter %.1f ms", p->min_us / 1000.0, p->max_us / 1000.0, p->jitter_us / 1000.0);
     } else text(cx, top + 6, F_LARGE, RED, "No answer");
-    text_fit(cx, top + 126, F_BODY, p->loss_pct > 5 ? YELLOW : WHITE, cw, "%d of %d answered, %d %% lost%s", p->got, p->sent, p->loss_pct,
+    text_fit(cx, top + 126, F_BODY, p->loss_pct > PING_LOSS_CHECK ? YELLOW : WHITE, cw, "%d of %d answered, %d %% lost%s", p->got, p->sent, p->loss_pct,
              pg.cancelled ? " (stopped)" : "");
     if (pg.mode == MODE_ICMP) text_fit(cx, top + 170, F_SMALL, GREY, cw, "ICMP echo to %s", info.router);
     else text_fit(cx, top + 170, F_SMALL, YELLOW, cw, "TCP connect to port %d (%s)", pg.port, pg.why_tcp);
@@ -409,7 +434,7 @@ static void draw_ping(float x, float y, float w, float h)
         if (pg.us[k] < 0) { rect(bx + 3, by + bh - 6, bw - 6, 6, RED); continue; }
         float v = bh * pg.us[k] / mx;
         if (v < 4) v = 4;
-        rect(bx + 3, by + bh - v, bw - 6, v, pg.us[k] > 20000 ? YELLOW : BLUE);
+        rect(bx + 3, by + bh - v, bw - 6, v, pg.us[k] > PING_AVG_CHECK_US ? YELLOW : BLUE);
     }
     rect(cx, by + bh + 2, cw, 2, LINE);
 }
@@ -425,7 +450,8 @@ int mod_network_open(void)
         read_pad();
         int back = ui_leave();
         if (back <= 0) { network_tile(); return back; }
-        if ((pressed & BTN_CROSS) && net_is_up()) {
+        int can = net_is_up() && !info.frozen;   /* reads that froze before: no test on top */
+        if ((pressed & BTN_CROSS) && can) {
             run_job_cancelable("Network test", job_test);
             network_tile();
             write_report();
@@ -437,7 +463,7 @@ int mod_network_open(void)
         draw_ping(MG + cw + 32, TOP, cw, h);
         if (level >= 0) status_linef(level == 0 ? GREEN : level == 1 ? YELLOW : RED, "%s%s.", level == 0 ? "No problem found: " : level == 1 ? "Check: " : "Problem: ", why);
         else status_line("The router answers within a few milliseconds on a cable, a little more on Wi-Fi.", GREY);
-        footer(net_is_up() ? "CROSS ping the router and time a DNS lookup  CIRCLE home  START exit" : "CIRCLE home  START exit");
+        footer(can ? "CROSS ping the router and time a DNS lookup  CIRCLE home  START exit" : "CIRCLE home  START exit");
         report_footnote();
         ui_flip();
     }
@@ -448,15 +474,29 @@ void mod_network_report(void)
     if (level < 0 && !info.done) return;
     rep_out("--- network ---\n");
     if (info.rc) {
-        rep_out("connection: not read, %s (rc 0x%08x)\n", net_start_frozen() ? "the network start froze this console before" : "netctl not started",
-                (unsigned)info.rc);
+        if (net_start_frozen()) rep_out("connection: not read, the network start froze this console before\n");
+        else if (info.frozen) rep_out("connection: not read, the reads froze this console before (net_info)\n");
+        else if (!net_is_up()) rep_out("connection: not read, the network did not start\n");
+        else rep_out("connection: not read, netctl refused (rc 0x%08x)\n", (unsigned)info.rc);
         return;
     }
-    rep_out("device %s, link %s (type %d, state %d), MTU %d", info.device == NET_CTL_DEVICE_WIRELESS ? "Wi-Fi" : info.device == NET_CTL_DEVICE_WIRED ? "cable" : "not read",
-            ping_link_text(info.link_type), info.link_type, info.link, info.mtu);
-    if (info.device == NET_CTL_DEVICE_WIRELESS) rep_out(", signal %d %%, channel %d", info.rssi, info.channel);
-    rep_out("\naddress %s (config %d), netmask %s, router %s, DNS %s %s\n", info.ip[0] ? info.ip : "none", info.ip_config, info.mask, info.router,
-            info.dns1, info.dns2);
+    char lt[12] = "not read", ls[12] = "not read";   /* a value netctl refused: "not read", never -1 */
+    if (info.link_type >= 0) snprintf(lt, sizeof lt, "%d", info.link_type);
+    if (info.link >= 0) snprintf(ls, sizeof ls, "%d", info.link);
+    rep_out("device %s, link %s (type %s, state %s)", info.device == NET_CTL_DEVICE_WIRELESS ? "Wi-Fi" : info.device == NET_CTL_DEVICE_WIRED ? "cable" : "not read",
+            info.link_type >= 0 ? ping_link_text(info.link_type) : "not read", lt, ls);
+    if (info.mtu > 0) rep_out(", MTU %d", info.mtu);
+    else rep_out(", MTU not read");
+    if (info.device == NET_CTL_DEVICE_WIRELESS) {
+        if (info.rssi >= 0) rep_out(", signal %d %%", info.rssi);
+        else rep_out(", signal not read");
+        if (info.channel >= 0) rep_out(", channel %d", info.channel);
+        else rep_out(", channel not read");
+    }
+    rep_out("\naddress %s", info.ip[0] ? info.ip : "none");
+    if (info.ip_config >= 0) rep_out(" (config %d)", info.ip_config);
+    rep_out(", netmask %s, router %s, DNS %s %s\n", info.mask[0] ? info.mask : "none", info.router[0] ? info.router : "none",
+            info.dns1[0] ? info.dns1 : "none", info.dns2);
     if (pg.done) {
         if (pg.mode == MODE_ICMP) rep_out("ping: ICMP echo to the router, %d sent", pg.st.sent);
         else rep_out("ping: TCP connect to the router's port %d (%s), %d sent", pg.port, pg.why_tcp, pg.st.sent);

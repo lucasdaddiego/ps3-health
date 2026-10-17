@@ -150,15 +150,19 @@ each with the module's own code and journal entries:
 1. Drive: the drive read of the session, or a new SMART read (no self-test,
    no first-run prompt of the optional logs).
 2. Cooling: the temperatures and the fan duty at rest.
-3. Memory: one pattern over the user memory (XDR) and the RSX memory, then the
-   SPU local-store test.
-4. Network: the connection data and five pings to the router.
+3. Memory: one pass over the user memory (XDR) and the RSX memory, the first
+   two patterns block by block in turns (so every bit is written as 0 and as
+   1), then the SPU local-store test.
+4. Network: the connection data and five pings to the router. When the
+   network did not start (or its start froze before), the step runs no test
+   and shows "not run" with no dot, as the module gives no verdict then.
 
 A first-run prompt that was never answered (the fan, the SPUs) comes before
 the run. The steps run behind a counter; CIRCLE stops after the step that
-runs, and the rest show "not run". One verdict screen lists each step with its
-dot and result, and each module's tile changes as after a normal run. The
-whole check takes a few minutes, most of it the RSX memory. Without a writable
+runs (that step runs to its end), and the rest show "not run". One verdict
+screen lists each step with its dot and result, and each module's tile changes
+as after a normal run (one write of `state.txt` for all four). The whole check
+takes under a minute (under 30 s on the author's console). Without a writable
 app folder there is no journal, and R1 does nothing.
 
 ### Drive
@@ -166,17 +170,21 @@ app folder there is no journal, and R1 does nothing.
 1. The first screen offers **CROSS** to read the drive and TRIANGLE for demo
    mode. The app writes each step to the journal before it runs it.
 2. Three pages (LEFT/RIGHT): the attribute table, a summary and the trend.
+   The header above them shows the serial number masked, as the report does.
    - UP/DOWN scroll the table and the trend, L1/R1 by a screen.
    - CROSS reads the drive again. Rows whose raw value changed since the
      previous read turn blue.
    - The summary page has the SSD's **wear trend**: a straight line through
-     the life left of the reads in `trend.txt` (least squares over the days)
-     gives "about N months to 0 %", once the reads span 14 days and life left
-     dropped by a point or more; past 10 years it says "over 10 years". Until
-     then it says why there is no estimate (one read, too few days, no drop).
-     It is a rough guide: wear is not linear, and the attribute counts in whole
-     points. The report has the same line. At the smallest visible area it
-     shares the life row.
+     the life left of the reads in `trend.txt` (least squares over the days,
+     one point a day: the last read of each day) gives "about N months to
+     0 %", once the reads span 14 days and life left dropped by a point or
+     more; past 10 years it says "over 10 years". Until then it says why there
+     is no estimate (one read, too few days, no drop). The dates come from the
+     console clock: a read dated before an earlier one (the clock was set
+     back) is left out, and when the newest read is such a read there is no
+     estimate, with that reason. It is a rough guide: wear is not linear, and
+     the attribute counts in whole points. The report has the same line. At
+     the smallest visible area it shares the life row.
    - The trend page lists the full reads of this drive from `trend.txt`,
      newest first: the local date and time, the power-on hours, the drive
      temperature, the life left, the host writes and the sum of the error
@@ -215,7 +223,9 @@ load, the six SPUs on the app's own heat program (multiply-add chains that
 keep the float pipeline busy), and the RSX drawing 160 full-screen layers per
 frame; the temperatures every 2 s on a curve, then the peak values, the fan
 response and the rate of each SPU in millions of loops a second. CIRCLE stops
-the test early and keeps the curve.
+the test early and keeps the curve. At rest, the tile and the quick check
+turn yellow when the hotter chip is more than 3 C over the idle limit of the
+console model (below), or at 70 C with no model set.
 
 The SPUs start and stop behind the counter, every call journaled. Their
 first-run prompt, shared with the Memory module's SPU test, comes at the
@@ -226,7 +236,7 @@ which.
 The test stops by itself, with a yellow result that names the reason:
 - when the Cell or the RSX reaches 75 C;
 - after two failed temperature reads in a row;
-- when an SPU stops reporting (its count did not move from one sample to the
+- when an SPU stops reporting (its count did not move from one reading to the
   next, 2 s later).
 
 The verdict compares the peak with the usual range seen on a PS3 with clean
@@ -239,23 +249,34 @@ console family: fat (CECHA to CECHQ), slim (CECH-20xx to 30xx) or super slim
 (CECH-40xx), from the label at the back. CIRCLE skips it; L1 changes it later.
 The answer goes into `family.txt`. After each test the module compares four
 values with that family's usual range: the hotter chip before the load, its
-peak, its rise over the first 60 s (C a minute) and the fan duty at the end.
-None above the range: "no sign of dry paste"; one: "dust or old paste is
-possible"; two or more: "dry paste or dust is likely". It is an **estimate**,
-and the screen says so. The ranges are provisional, in one table in
-`source/heat.c`:
+peak in the first 2 minutes (the ranges come from 2-minute tests; the result
+and the report also give the peak of the whole test), its rise over the first
+60 s (C a minute, taken once at 60 s) and the fan duty at the end. None above
+the range: "no sign of dry paste"; one: "dust or old paste is possible"; two
+or more: "dry paste or dust is likely". A test that reaches 75 C within its
+first minute gets "likely" at once. It is an **estimate**, and the screen says
+so. The ranges are provisional, in one table in `source/heat.c`:
 
 | Family | Idle | Peak | Rise in the first minute | Fan at the end |
 |---|---|---|---|---|
 | Fat | 62 C | 74 C | 14 C | 70 % |
 | Slim | 56 C | 72 C | 12 C | 60 % |
-| Super slim | 62 C | 72 C | 12 C | 60 % |
+| Super slim | 59 C | 72 C | 12 C | 60 % |
 
-The super slim row comes from one console (the author's, with a margin); the
-fat and slim rows are guesses from the chips' generations, not measured. The
-compatibility text (Help's QR code and the report) carries a Cooling line after
-a load test: the family, the idle and peak temperatures, the rise, the fan and
-the test length, and no identifier. Reports with it will set real ranges.
+A test that starts warm says less about the paste: a load test that starts
+less than 10 minutes after the end of the last one in this session, or more
+than 3 C above the reading taken when the module opened, is a **warm start**.
+Then the idle value and the rise leave the estimate (it uses the peak and the
+fan), and the screen says to rest about 10 minutes for a full estimate.
+
+The super slim row comes from one console (the author's: its cold idle reads
+56 to 58 C, its load test with a margin); the fat and slim rows are guesses
+from the chips' generations, not measured. The compatibility text (Help's QR
+code and the report) carries a Cooling line after a load test: the family, the
+idle and peak temperatures, the rise, the fan and the test length, and no
+identifier. Reports with it will set real ranges. When Help's link would not
+fit the QR code, the line gets shorter (the family, idle, peak and rise), then
+goes.
 
 **Soak test.** R1 offers 30 or 60 minutes of turns: a load turn of 4 minutes
 (two PPU threads, the six SPUs on the heat program, the RSX fill), then a
@@ -264,12 +285,17 @@ local stores once, then a PPU thread writes and checks the Memory module's four
 patterns over 64 MB of user memory, while the RSX keeps its load). Only one
 SPU group runs at a time: the heat group ends before the local-store test.
 The soak keeps the load test's stops (75 C, two failed reads, an SPU that stops
-reporting during a load turn) and CIRCLE stops it cleanly. The curve keeps its
-400 samples by halving them when full (each pair becomes its higher value), so
-an hour fits. Each turn is one journal entry (`soak_load`, `soak_mem`) from its
-start to its end; a freeze inside keeps the soak off until the journal is
-cleared. A memory error under heat is a red result; the result card shows the
-memory passes, the local-store tests and their errors.
+reporting during a load turn), checked at every reading, every 2 s, and CIRCLE
+stops it cleanly. The curve keeps its 400 points by halving them when full
+(each pair becomes its higher value), so an hour fits; a point is then the
+highest of its readings. Every turn runs its full length: the jobs of a turn
+change (the SPU start and stop, the local-store test) pause the soak's clock,
+and their few seconds are a gap in the curve. Each turn is one journal entry
+(`soak_load`, `soak_mem`) from its start to its end; a freeze inside keeps the
+soak off until the journal is cleared. A memory error under heat is a red
+result, and so are SPUs of a local-store test that could not be stopped (the
+soak ends there); a local-store test that did not end is a yellow one. The
+result card shows the memory passes, the local-store tests and their errors.
 
 ### Controller
 
@@ -318,8 +344,12 @@ so). A thread keeps the port's ring of 16 blocks about 43 ms ahead. The start
 (the audio module, the library, the port) is one journaled call at the first
 test, behind the counter; the end (the port stop and close, the library, the
 module unload) is another, at every way out of the module and once more at the
-exit. The tile and the report keep each answer. Without a writable app folder
-the module stays closed.
+exit. Before the end the sound that plays fades out in 40 ms and the port
+plays it out, so leaving never clicks. An end that froze the console before is
+not made again: the port stays open and silent, and a later test in the same
+session plays on it. The tile and the report keep each answer; a test stopped
+with TRIANGLE before its last answer counts as "not answered", yellow. Without
+a writable app folder the module stays closed.
 
 ### Network
 
@@ -340,7 +370,9 @@ does not answer the first three, the journal says ICMP froze before, or there
 is no journal, the ping is the time of a TCP connect to the router's port 80
 (53 when 80 gives nothing): its answer, a connection or a refusal, is one
 round trip too. The screen and the report say which method ran and why. The
-network starts as in Transfer, as the same journaled call.
+network starts as in Transfer, as the same journaled call, and the netctl
+reads of the connection data are one more (`net_info`): reads that froze the
+console are not made again until the journal is cleared.
 
 ### Transfer
 
@@ -365,11 +397,16 @@ writable app folder the exit makes no network call.
 
 CROSS takes all the user memory (XDR) the app can get in 1 MB blocks, about
 200 MB of the 256, writes four patterns (address based, its inverse,
-alternating bits, a linear congruential sequence) and reads each back. A wrong
-word is an error, listed with its address. TRIANGLE does the same on the free RSX
-memory (GDDR3) through its mapping, two patterns; it is slow by design, and
-the blocks stay taken until the app exits (the RSX allocator gives nothing
-back). Both write only to memory the app allocated. CIRCLE stops a test.
+alternating bits, a linear congruential sequence) and reads each back, in a
+few seconds. A wrong word is an error, listed with its address. TRIANGLE does
+the same on the free RSX memory (GDDR3) through its mapping, two patterns, in
+under a minute; the blocks stay taken until the app exits (the RSX allocator
+gives nothing back). Both write only to memory the app allocated. CIRCLE stops
+a test. The loops keep each pattern as a running value (no per-word branch)
+and clear each 128-byte cache line with `dcbz` before writing it, so a write
+does not first read the line from memory; the report gives the write and the
+read speeds of each test in MB/s (`-DMEM_LINES=0` in the Makefile's `CFLAGS`
+builds the 2.1.0 loops, to compare).
 
 SQUARE tests the local store of each of the six SPUs, the Cell's helper
 cores. The app runs its own SPU program (ps3gfx's SPU kit) as one group of
@@ -456,13 +493,15 @@ The other system calls, all read-only and journaled like the drive calls:
 383 `sys_game_get_temperature` (Cell and RSX) and, behind a first-run prompt,
 409 `sys_sm_get_fan_policy` (the fan duty). The speed and USB tests use the
 normal file calls, the Transfer and Network modules the normal socket calls
-(the Network module's ping a raw ICMP socket, else a TCP connect), the Memory
+(the Network module's ping a raw ICMP socket, else a TCP connect) and the
+netctl reads, the Memory
 module's XDR and RSX tests and the soak test's memory turns their own
 allocations, the Display module the video state read, the Audio module one
 port of the system's audio library (calls into the firmware's library, not
 syscalls). The network start (the first open of Transfer or Network), its end
-at the exit, the ICMP run, the audio start and end, each turn of the soak test
-and the copy to a USB stick (SELECT) are journaled too. (Raw sector
+at the exit, the Network module's connection reads, the ICMP run, the audio
+start and end, each turn of the soak test and the copy to a USB stick (SELECT)
+are journaled too. (Raw sector
 reads, syscall 602, and the console id, syscall 870, are refused on HEN: ENXIO
 and EPERM on the test console. The app does not call them.) The build checks
 this: `tools/syscalls.py` scans the ELF for every syscall number and fails on

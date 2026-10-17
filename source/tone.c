@@ -16,6 +16,7 @@ static void start(tone *t, int channels, unsigned mask, double f0, double f1, do
     t->f1 = f1;
     t->amp = tone_db(dbfs);
     t->stop = -1;
+    t->cut = -1;
 }
 
 void tone_beeps(tone *t, int channels, unsigned mask, double hz, double dbfs)
@@ -39,7 +40,21 @@ void tone_stop(tone *t)
     if (t->stop < 0) t->stop = t->pos + t->fade;
 }
 
-int tone_done(const tone *t) { return (t->len >= 0 && t->pos >= t->len) || (t->stop >= 0 && t->pos >= t->stop); }
+/* The gain of a running fade out is kept: the cut's own ramp multiplies it,
+ * so the sound only gets quieter. A second cut changes nothing (a new ramp
+ * would jump back up). */
+void tone_cut(tone *t, long samples)
+{
+    if (samples < 1) samples = 1;
+    if (t->cut >= 0) return;
+    t->cut = t->pos + samples;
+    t->cut_len = samples;
+}
+
+int tone_done(const tone *t)
+{
+    return (t->len >= 0 && t->pos >= t->len) || (t->stop >= 0 && t->pos >= t->stop) || (t->cut >= 0 && t->pos >= t->cut);
+}
 
 double tone_freq(const tone *t)
 {
@@ -52,7 +67,7 @@ double tone_freq(const tone *t)
 static double ramp(long k, long fade) { return k >= fade ? 1 : 0.5 - 0.5 * cos(3.141592653589793 * k / fade); }
 
 /* The envelope at sample pos: the sound's own fades, the beep's, and the
- * fade out of tone_stop. */
+ * fade outs of tone_stop and tone_cut. */
 static double envelope(const tone *t, long pos)
 {
     double e = 1;
@@ -65,6 +80,7 @@ static double envelope(const tone *t, long pos)
         e = ramp(p, t->fade) * ramp(t->beep - p, t->fade);
     }
     if (t->stop >= 0) e *= pos >= t->stop ? 0 : ramp(t->stop - pos, t->fade);
+    if (t->cut >= 0) e *= pos >= t->cut ? 0 : ramp(t->cut - pos, t->cut_len);
     return e;
 }
 

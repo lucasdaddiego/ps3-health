@@ -78,7 +78,7 @@ void drive_close(drive_state *d);
 void drive_report(drive_state *d, const char *when);       /* the drive section of the report + the .bin dumps + the trend line */
 int compat_body(const drive_state *d, char *out, int n);
 int drive_life_eta(char *out, int n);        /* mod_drive.c: the wear trend of this drive in one line (trend.h); 0 with no drive data */
-int cool_compat(char *out, int n);           /* mod_cool.c: the Cooling line of the compat text; 0 before a load test */
+int cool_compat(char *out, int n, int detail);   /* mod_cool.c: the Cooling line of the compat text (heat_compat_line); 0 before a load test */
 int compat_title(const drive_state *d, char *out, int n);
 const char *writes_unit_text(int unit);
 void hours_text(int hours, char *out, int n);

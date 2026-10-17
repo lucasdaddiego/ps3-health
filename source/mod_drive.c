@@ -132,12 +132,13 @@ static void draw_header(void)
 {
     const ata_identity *i = &D.id;
     const smart_data *s = &D.s;
-    char type[16];
+    char type[16], serial[sizeof i->serial];
+    serial_mask(i->serial, serial, sizeof serial);   /* as in the report: the screen can end up in a photo */
     if (i->rotation == 1) snprintf(type, sizeof type, "SSD");
     else if (i->rotation > 0x400 && i->rotation < 0xFFFF) snprintf(type, sizeof type, "HDD %d rpm", i->rotation);
     else snprintf(type, sizeof type, "drive");
     float x = text(MG, TOP, F_MED, WHITE, "%s", i->model);
-    text_fit(x + 24, TOP + base_dy(F_MED, F_BODY), F_BODY, GREY, SW - MG - x - 24, "firmware %s    serial %s", i->firmware, i->serial);
+    text_fit(x + 24, TOP + base_dy(F_MED, F_BODY), F_BODY, GREY, SW - MG - x - 24, "firmware %s    serial %s", i->firmware, serial);
     x = text(MG, TOP + 48, F_BODY, GREY, "%s    %.1f GB    SATA %s Gb/s (max %s)    TRIM %s    SMART %s", type,
              (double)i->sectors * i->logical_size / 1e9, gen_text(i->sata_cur_gen), gen_text(i->sata_max_gen),
              i->trim ? "yes" : "no", i->smart_enabled ? "on" : "off");

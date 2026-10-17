@@ -35,19 +35,29 @@ static int param(char *out, int n, int j, const char *key, const char *value)
     return j + e;
 }
 
-int issue_form_url(const char *tpl, const char *title, const form_field *f, int nf, char *out, int n)
+int issue_form_url(const char *title, const form_field *f, int nf, char *out, int n)
 {
-    int j;
-    if (tpl) {
-        j = snprintf(out, n, APP_REPO "/issues/new?template=%s", tpl);
-        if (j < 0 || j >= n) return -1;
-        j = param(out, n, j, "title", title);
-    } else {
-        j = snprintf(out, n, APP_REPO "/issues/new");
-        if (j < 0 || j >= n) return -1;
-        j = param(out, n, j, "title", title);
-        if (j > 0) out[strlen(APP_REPO "/issues/new")] = '?';
-    }
+    int j = snprintf(out, n, APP_REPO "/issues/new");
+    if (j < 0 || j >= n) return -1;
+    j = param(out, n, j, "title", title);
+    if (j > 0) out[strlen(APP_REPO "/issues/new")] = '?';
     for (int i = 0; i < nf && j >= 0; i++) j = param(out, n, j, f[i].id, f[i].value);
     return j;
+}
+
+int compat_fit_url(const char *title, char *body, int size, const char *const *alt, int nalt, char *out, int n, int limit)
+{
+    int base = (int)strlen(body);
+    const form_field f[] = {{"body", body}};
+    for (int i = 0; i <= nalt; i++) {        /* each line in turn, then none */
+        body[base] = 0;
+        if (i < nalt) {
+            if (base + (int)strlen(alt[i]) >= size) continue;
+            strcpy(body + base, alt[i]);
+        }
+        int j = issue_form_url(title, f, 1, out, n);
+        if (j >= 0 && j <= limit) return j;
+    }
+    body[base] = 0;
+    return -1;
 }

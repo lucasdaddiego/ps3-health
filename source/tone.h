@@ -17,6 +17,7 @@ typedef struct {
     long fade;                               /* samples of each fade in and fade out */
     long pos;                                /* samples played */
     long stop;                               /* tone_stop: the sample where the fade out ends, -1 none */
+    long cut, cut_len;                       /* tone_cut: the sample where its short fade ends (-1 none), and its length */
     double phase;
 } tone;
 
@@ -24,6 +25,7 @@ double tone_db(double dbfs);                 /* -18 -> 0.126: the peak of a sine
 void tone_beeps(tone *t, int channels, unsigned mask, double hz, double dbfs);   /* 0.6 s on, 0.4 s off, until tone_stop */
 void tone_sweep(tone *t, int channels, unsigned mask, double f0, double f1, double seconds, double dbfs);
 void tone_stop(tone *t);                     /* a fade out from now, then silence */
+void tone_cut(tone *t, long samples);        /* a short fade out from now (the app's exit), on top of any fade already running */
 int tone_done(const tone *t);                /* the sound ended: silence from here */
 double tone_freq(const tone *t);             /* the frequency now */
 void tone_fill(tone *t, float *out, int frames);   /* frames x channels samples; silence once done */

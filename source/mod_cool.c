@@ -1,14 +1,14 @@
 /* The Cooling module: the Cell and RSX temperatures (syscall 383), the fan
  * duty (syscall 409, read-only, behind the first-run prompt), and a timed load
  * with a temperature curve: two PPU threads, the six SPUs (the SPU kit's heat
- * mode through spu_run.c, behind the SPU prompt) and the RSX. The test stops
- * by itself at 75 C, after two failed temperature reads in a row, or when an
- * SPU stops reporting. Nothing is written to the fan: the system keeps its
- * own policy.
+ * mode through spu_run.c, behind the SPU prompt) and the RSX. The test reads
+ * the temperatures every 2 s and stops by itself at 75 C, after two failed
+ * temperature reads in a row, or when an SPU stops reporting. Nothing is
+ * written to the fan: the system keeps its own policy.
  * Also: the console family, asked once and kept in family.txt, for a paste
- * estimate after each test (heat.c: provisional ranges), and the soak test:
- * 30 or 60 minutes of load turns and memory turns by turns, one SPU group at
- * a time, with the same stops. */
+ * estimate after each test (heat.c: provisional ranges; a warm start leaves
+ * idle and rise out), and the soak test: 30 or 60 minutes of load turns and
+ * memory turns by turns, one SPU group at a time, with the same stops. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +21,7 @@
 #include "heat.h"
 
 #define MAX_SAMPLES 400                      /* every 2 s: 13 min; a soak halves the curve when it is full */
+#define READ_US 2000000                      /* a reading and the stops every 2 s, whatever the curve's step */
 #define STOP_C 75                            /* a load test stops when the Cell or the RSX reaches it */
 #define STOP_S "75 C"                        /* STOP_C in the texts */
 #define WARM_C 72                            /* the verdict: warm from here */
@@ -35,8 +36,11 @@ static int family;                           /* FAMILY_*: read from FAMILY_FILE 
 enum { STOP_NONE, STOP_HOT, STOP_READ, STOP_SPU };   /* why a load test stopped by itself */
 static struct {
     int done, n, seconds, cancelled;
-    int step;                                /* seconds between two samples: 2, doubled at each halving of a soak */
+    int step;                                /* seconds between two points of the curve: 2, doubled at each halving of a soak (a point: the readings' maxima) */
     int cpu0, rsx0, fan0, cpu_max, rsx_max, fan_end;
+    int cpu_peak, rsx_peak;                  /* the maxima of the first HEAT_PEAK_S, for the paste estimate; -1 */
+    int rise, rise_done;                     /* the hotter chip's rise over the first 60 s, taken once at 60 s from the 2 s points; done: it was taken */
+    int warm;                                /* a warm start (heat_warm_start): idle and rise leave the paste estimate */
     int stop, stop_s, stop_cpu, stop_rsx, stop_spu;   /* STOP_*, its second; the readings of a STOP_HOT; the SPU of a STOP_SPU */
     int spus;                                /* the six SPUs run the heat load now (spu_up returned 1) */
     int spus_ran;                            /* they ran in at least one load turn */
@@ -51,10 +55,15 @@ static struct {
     unsigned long mem_first;                 /* the first wrong word's address */
     int ls_runs, ls_ok;                      /* SPU local-store tests begun, and ended with the six */
     unsigned ls_errors;
+    int ls_stuck;                            /* a local-store test left SPUs that could not be stopped: the soak stopped there */
     char ls_why[64];                         /* the last local-store test that did not end */
+    s64 paused;                              /* a soak: the time of the turn changes' jobs, out of its clock */
 } load;
 static spu_result spu;                       /* the SPU leg of the last load test (of a soak: its last load turn) */
 static heat_paste paste;                     /* the paste estimate of the last test */
+static int open_hot = -1;                    /* the hotter chip at the module's last open: a test that starts warmer is a warm start */
+static s64 last_end;                         /* the end of the last load in this session, 0 none */
+static s64 clock0;                           /* the start of the test that runs */
 
 static void read_now(void)
 {
@@ -186,7 +195,7 @@ static int spu_mean(void)
     return (int)(m / SPU_KIT_SPUS + 0.5);
 }
 
-/* A full curve (a soak): each pair of samples becomes one, twice the step. */
+/* A full curve (a soak): each pair of points becomes one, twice the step. */
 static void halve(void)
 {
     heat_halve(load.cpu, load.n);
@@ -195,20 +204,57 @@ static void halve(void)
     load.step *= 2;
 }
 
-/* A sample every step, then the stops, the hot one first: the Cell or the
- * RSX at 75 C, two failed reads in a row, an SPU whose count did not move
- * since the last sample (heat reports every 2^20 loops, hundreds of times a
- * second). The first sample of a heat only keeps the counts. A sample that
- * catches up after a slow frame, under 1 s after the last count, skips the
- * counts. 1 when the test stops. */
+/* The readings since the last point of the curve: their maxima become the
+ * next point once they cover the step (one reading while the step is 2 s);
+ * -1 only when each failed or was a gap. */
+static struct { short cpu, rsx, fan; int reads; } bucket;
+
+static void bucket_reset(void) { bucket.cpu = bucket.rsx = bucket.fan = -1, bucket.reads = 0; }
+
+/* The bucket as the next point, a halving first when the curve is full. At
+ * 60 s the rise is taken, once, from the 2 s points: before any halving. */
+static void store_point(void)
+{
+    if (load.n == MAX_SAMPLES) halve();
+    load.cpu[load.n] = bucket.cpu;
+    load.rsx[load.n] = bucket.rsx;
+    load.fan[load.n] = bucket.fan;
+    load.n++;
+    bucket_reset();
+    if (!load.rise_done && load.n > 60 / load.step) {
+        int rc = heat_rise(load.cpu, load.n, load.step), rr = heat_rise(load.rsx, load.n, load.step);
+        load.rise = rc > rr ? rc : rr;
+        load.rise_done = 1;
+    }
+}
+
+static void bucket_add(int reads)
+{
+    bucket.reads += reads;
+    if (bucket.reads * (READ_US / 1000000) >= load.step) store_point();
+}
+
+/* A reading slot the turn change's jobs held up: a gap in the curve, so its
+ * x stays the time. No stop counts it. */
+static void skip_read(void) { bucket_add(1); }
+
+/* A reading every 2 s into the bucket, then the stops, the hot one first:
+ * the Cell or the RSX at 75 C, two failed reads in a row, an SPU whose count
+ * did not move since the last reading (heat reports every 2^20 loops,
+ * hundreds of times a second). The first reading of a heat only keeps the
+ * counts. A reading that catches up after a slow frame, under 1 s after the
+ * last count, skips the counts. 1 when the test stops. */
 static int sample(s64 now, int *misses)
 {
     read_now();
-    if (load.n == MAX_SAMPLES) halve();
-    load.cpu[load.n] = (short)cpu_now;
-    load.rsx[load.n] = (short)rsx_now;
-    load.fan[load.n] = (short)fan_pct;
-    load.n++;
+    if (now - clock0 <= HEAT_PEAK_S * 1000000LL) {   /* the paste estimate's peak: the first 2 minutes, as the ranges */
+        if (cpu_now > load.cpu_peak) load.cpu_peak = cpu_now;
+        if (rsx_now > load.rsx_peak) load.rsx_peak = rsx_now;
+    }
+    if (cpu_now > bucket.cpu) bucket.cpu = (short)cpu_now;
+    if (rsx_now > bucket.rsx) bucket.rsx = (short)rsx_now;
+    if (fan_pct > bucket.fan) bucket.fan = (short)fan_pct;
+    bucket_add(1);
     int still = -1;
     *misses = cpu_now < 0 || rsx_now < 0 ? *misses + 1 : 0;
     if (load.spus && (counts_fresh || now - load.t1 >= 1000000)) {
@@ -264,7 +310,7 @@ static void draw_graph(float x, float y, float w, float h, int n, int span)
     if (span < 2) span = 2;
     for (int t = 0; t <= span; t += tick_s(span))
         text_c(gx + gw * t / span, gy + gh + 8, F_SMALL, DIM, "%d:%02d", t / 60, t % 60);
-    float sx = gw * (load.step ? load.step : 2) / span;
+    float sx = gw * (load.step ? load.step : 2) / span;   /* a point per step: the turn changes' gaps keep x on time */
     for (int t = 0; t < 2; t++) {           /* one batch per curve, the Cell over the RSX */
         const short *v = t ? load.cpu : load.rsx;
         batch_begin(t ? WHITE : BLUE);
@@ -286,38 +332,49 @@ static void now_values(void)
     text_r(rx, TOP, F_MED | TNUM, temp_color(cpu_now), "Cell %d C", cpu_now);
 }
 
+/* A warm start: under 10 minutes after the last load of this session, or
+ * over 3 C above the reading of the module's open (heat_warm_start). */
 static void start_test(int seconds, int soak)
 {
     memset(&load, 0, sizeof load);
     load.seconds = seconds;
     load.soak = soak;
     load.step = 2;
+    load.cpu_peak = load.rsx_peak = load.rise = -1;
+    bucket_reset();
     read_now();
     load.cpu0 = cpu_now;
     load.rsx0 = rsx_now;
     load.fan0 = fan_pct;
+    load.warm = heat_warm_start(last_end ? (long)((sysGetSystemTime() - last_end) / 1000000) : -1, open_hot,
+                                cpu_now > rsx_now ? cpu_now : rsx_now);
 }
 
 /* The paste estimate of the last test, for the family now set: at the
- * test's end, and again when L1 changes the family after it. */
+ * test's end, and again when L1 changes the family after it. The stop at
+ * 75 C before the rise was taken (60 s) is a strong sign on its own. */
 static void judge_paste(void)
 {
-    int idle = load.cpu0 > load.rsx0 ? load.cpu0 : load.rsx0, peak = load.cpu_max > load.rsx_max ? load.cpu_max : load.rsx_max;
-    int rc = heat_rise(load.cpu, load.n, load.step), rr = heat_rise(load.rsx, load.n, load.step);
-    if (spu.stuck || load.stop == STOP_READ) rc = rr = -1;   /* no estimate on readings the test could not finish */
-    heat_paste_judge(family, idle, peak, rc > rr ? rc : rr, load.fan_end, &paste);
+    int idle = load.cpu0 > load.rsx0 ? load.cpu0 : load.rsx0, peak = load.cpu_peak > load.rsx_peak ? load.cpu_peak : load.rsx_peak;
+    int rise = load.rise_done ? load.rise : -1, flags = load.warm ? HEAT_WARM : 0;
+    if (load.stop == STOP_HOT && !load.rise_done) flags |= HEAT_HOT_EARLY;
+    if (spu.stuck || load.stop == STOP_READ) rise = -1, flags &= ~HEAT_HOT_EARLY;   /* no estimate on readings the test could not finish */
+    heat_paste_judge(family, idle, peak, rise, load.fan_end, flags, &paste);
 }
 
-/* The end of every test: the maxima, the fan, the time, the paste estimate. */
+/* The end of every test: the last readings as a point, the maxima, the fan,
+ * the time, the paste estimate. */
 static void end_test(s64 t0)
 {
+    if (bucket.reads) store_point();         /* a soak's readings since its last point (the stop's among them) */
     load.cpu_max = load.rsx_max = -1;
     for (int k = 0; k < load.n; k++) {
         if (load.cpu[k] > load.cpu_max) load.cpu_max = load.cpu[k];
         if (load.rsx[k] > load.rsx_max) load.rsx_max = load.rsx[k];
     }
     load.fan_end = fan_pct;
-    load.seconds = (int)((sysGetSystemTime() - t0) / 1000000);
+    last_end = sysGetSystemTime();
+    load.seconds = (int)((last_end - t0) / 1000000);
     load.done = 1;
     judge_paste();
     pressed = 0;                             /* a button still down is not a new press */
@@ -337,13 +394,14 @@ static void load_screen(int seconds)
     for (int k = 0; k < 2; k++)
         if (sysThreadCreate(&th[k], load_thread, NULL, 2500, 0x4000, THREAD_JOINABLE, "load") == 0) ok[k] = 1, started++;
     s64 t0 = sysGetSystemTime(), next = t0;
+    clock0 = t0;
     while (!spu.stuck) {                     /* SPUs that could not be stopped, at their start or in an earlier test: no load on top */
         read_pad();
         s64 now = sysGetSystemTime();
         if (quit || (pressed & BTN_CIRCLE)) { load.cancelled = 1; break; }
         if (now - t0 >= (s64)seconds * 1000000) break;
-        if (now >= next && load.n < MAX_SAMPLES) {
-            next += 2000000;
+        if (now >= next) {
+            next += READ_US;
             if (sample(now, &misses)) { load.stop_s = (int)((now - t0) / 1000000); break; }
         }
         begin_frame();
@@ -436,6 +494,10 @@ static void turn_begin(int turn)
     }
     journal_start("soak_mem");
     if (!spu.stuck && !spu_stuck()) soak_ls_run();
+    if (soak_ls.stuck) {                     /* the SPUs of the local-store test could not be stopped: the soak ends here */
+        load.ls_stuck = 1;
+        return;
+    }
     mem_stop = 0;
     mem_th_ok = load.mem_blocks && sysThreadCreate(&mem_th, mem_thread, NULL, 1500, 0x4000, THREAD_JOINABLE, "soak_mem") == 0;
 }
@@ -462,6 +524,11 @@ static const char *soak_blocked(void)
     return NULL;
 }
 
+/* The turns run their full length: the jobs of a turn change (the SPU
+ * start and stop, the local-store test) pause the soak's clock, the next
+ * turn's time starts after them, and the soak ends with the last turn. The
+ * readings go on every 2 s; the ones the jobs held up are gaps in the curve,
+ * so that the curve keeps the time. */
 static void soak_screen(int minutes)
 {
     sys_ppu_thread_t th[2];
@@ -478,33 +545,37 @@ static void soak_screen(int minutes)
         if (sysThreadCreate(&th[k], load_thread, NULL, 2500, 0x4000, THREAD_JOINABLE, "load") == 0) ok[k] = 1, started++;
     if (!spu.stuck) turn_begin(0);
     s64 t0 = sysGetSystemTime(), next = t0, turn_to = t0 + SOAK_LOAD_S * 1000000LL;
-    while (!spu.stuck) {
+    clock0 = t0;
+    while (!spu.stuck && !load.ls_stuck) {
         read_pad();
         s64 now = sysGetSystemTime();
         if (quit || (pressed & BTN_CIRCLE)) { load.cancelled = 1; break; }
-        if (now - t0 >= (s64)seconds * 1000000) break;
-        if (now >= turn_to && turn + 1 < nturns) {   /* the next turn; its jobs stop the clock of the curve for a moment */
+        if (now >= turn_to && turn + 1 >= nturns) break;   /* the last turn ran its length */
+        if (now >= turn_to) {                /* the next turn */
             turn_end(turn);
             if (spu.stuck) break;
             turn_begin(++turn);
-            now = sysGetSystemTime();
-            turn_to = now + (turn % 2 ? SOAK_MEM_S : SOAK_LOAD_S) * 1000000LL;
-            if (next < now) next = now;
+            if (load.ls_stuck) break;
+            s64 back = sysGetSystemTime();
+            load.paused += back - now;
+            turn_to = back + (turn % 2 ? SOAK_MEM_S : SOAK_LOAD_S) * 1000000LL;
+            for (; next + READ_US <= back; next += READ_US) skip_read();
             continue;
         }
         if (now >= next) {
-            next += load.step * 1000000LL;
+            next += READ_US;
             if (sample(now, &misses)) { load.stop_s = (int)((now - t0) / 1000000); break; }
         }
         begin_frame();
         rsx_load();
         title();
-        double sec = (double)(now - t0) / 1e6;
+        double sec = (double)(now - t0 - load.paused) / 1e6;   /* the soak's clock: without the jobs */
+        if (sec > seconds) sec = seconds;
         float x = text(MG, TOP, F_MED | TNUM, WHITE, "Soak test  %d:%02d of %d:00", (int)sec / 60, (int)sec % 60, minutes);
-        spinner(x + 40, TOP + 20, 16, sec);
+        spinner(x + 40, TOP + 20, 16, (double)(now - t0) / 1e6);
         now_values();
         bar(MG, TOP + 56, SW - 2 * MG, 10, (float)(sec / seconds), GREEN);
-        draw_graph(MG, TOP + 90, SW - 2 * MG, BOTTOM - TOP - 184, load.n, seconds);
+        draw_graph(MG, TOP + 90, SW - 2 * MG, BOTTOM - TOP - 184, load.n, seconds + (int)(load.paused / 1000000));
         if (turn % 2 == 0)
             text_fit(MG, BOTTOM - 80, F_BODY, WHITE, SW - 2 * MG, "Load turn, %d of %d: %d PPU threads, %s and the RSX fill rate at full load.", turn + 1, nturns,
                      started, load.spus ? "the six SPUs" : "no SPUs");
@@ -565,7 +636,10 @@ static int soak_choice(void)
 
 /* ---- results ---------------------------------------------------------------- */
 
-static int soak_bad(void) { return load.soak && (load.mem_errors || load.ls_errors); }
+/* A soak's memory error, and SPUs of its local-store test that could not
+ * be stopped, are red; a local-store test that did not end is yellow. */
+static int soak_bad(void) { return load.soak && (load.mem_errors || load.ls_errors || load.ls_stuck); }
+static int soak_ls_short(void) { return load.soak && load.ls_ok < load.ls_runs; }
 
 /* A test that stopped by itself (75 C, no readings, an SPU), SPUs that could
  * not be stopped, no readings, a short test and 72 C or more give a yellow
@@ -575,13 +649,14 @@ static int verdict_dot(void)
 {
     int m = load.cpu_max > load.rsx_max ? load.cpu_max : load.rsx_max;
     if (soak_bad()) return DOT_BAD;
-    return load.stop || spu.stuck || m < 0 || load.n < 10 || m >= WARM_C ? DOT_WARN : DOT_OK;
+    return load.stop || spu.stuck || soak_ls_short() || m < 0 || load.n < 10 || m >= WARM_C ? DOT_WARN : DOT_OK;
 }
 
 static const char *verdict_text(void)
 {
-    static char t[128];
+    static char t[160];
     int m = load.cpu_max > load.rsx_max ? load.cpu_max : load.rsx_max;
+    if (load.ls_stuck) return "The SPUs of a local-store test could not be stopped: the soak stopped there. Quit the app with START.";
     if (soak_bad()) {
         snprintf(t, sizeof t, "Memory errors under heat: %ld in the XDR, %u in the SPU local stores. Run the Memory module's tests.", load.mem_errors,
                  load.ls_errors);
@@ -594,6 +669,10 @@ static const char *verdict_text(void)
     if (load.stop == STOP_READ) return "Stopped after two failed temperature reads in a row: no verdict.";
     if (load.stop == STOP_SPU) {
         snprintf(t, sizeof t, "Stopped because SPU %d stopped reporting: no verdict.", load.stop_spu);
+        return t;
+    }
+    if (soak_ls_short()) {
+        snprintf(t, sizeof t, "SPU local stores: %d of %d tests did not end (%s). No verdict.", load.ls_runs - load.ls_ok, load.ls_runs, load.ls_why);
         return t;
     }
     if (m < 0) return "No temperature readings during the test: no verdict.";
@@ -610,7 +689,7 @@ static const char *verdict_text(void)
 /* The SPU leg of the last test in one line, and its colour. */
 static u32 spu_line(char *s, int n)
 {
-    if (spu.stuck) {
+    if (spu.stuck || load.ls_stuck) {
         snprintf(s, n, "The SPUs did not stop: quit the app with START.");   /* one line at the smallest visible area */
         return RED;
     }
@@ -634,15 +713,15 @@ static u32 spu_line(char *s, int n)
 
 /* The last test left SPUs that could not be stopped: its result keeps the
  * red line, and no other load test runs on top of them. */
-static int stuck_shown(void) { return load.done && spu.stuck; }
+static int stuck_shown(void) { return load.done && (spu.stuck || load.ls_stuck); }
 
 /* The temperatures of the last test; to: the text between each start and
  * maximum (" to ", " -> max "). No sample (SPUs that could not be stopped
- * before the load, CIRCLE at once): the start values only, not the -1
- * maxima. */
+ * before the load, CIRCLE at once) or no reading in any: the start values
+ * only, not the -1 maxima. */
 static void temps_line(char *s, int n, const char *to)
 {
-    if (load.n) snprintf(s, n, "Cell %d%s%d C, RSX %d%s%d C", load.cpu0, to, load.cpu_max, load.rsx0, to, load.rsx_max);
+    if (load.n && (load.cpu_max >= 0 || load.rsx_max >= 0)) snprintf(s, n, "Cell %d%s%d C, RSX %d%s%d C", load.cpu0, to, load.cpu_max, load.rsx0, to, load.rsx_max);
     else snprintf(s, n, "Cell %d C, RSX %d C at the start", load.cpu0, load.rsx0);
 }
 
@@ -651,13 +730,16 @@ static const char *paste_word(void)
     return paste.verdict == PASTE_OK ? ", paste ok" : paste.verdict == PASTE_CHECK ? ", check paste" : paste.verdict == PASTE_LIKELY ? ", dry paste?" : "";
 }
 
+/* The idle warning: the family's idle range and a margin, else 70 C (heat_idle_hot). */
+static int idle_hot(void) { return heat_idle_hot(family, cpu_now > rsx_now ? cpu_now : rsx_now); }
+
 static void cool_tile(void)
 {
     char l1[48], l2[64], tail[24];
     if (load.done) {
-        if (load.n) snprintf(l1, sizeof l1, "Cell %d>%d, RSX %d>%d C", load.cpu0, load.cpu_max, load.rsx0, load.rsx_max);   /* short: line 1 of a tile */
+        if (load.n && (load.cpu_max >= 0 || load.rsx_max >= 0)) snprintf(l1, sizeof l1, "Cell %d>%d, RSX %d>%d C", load.cpu0, load.cpu_max, load.rsx0, load.rsx_max);   /* short: line 1 of a tile */
         else snprintf(l1, sizeof l1, "Cell %d C, RSX %d C", load.cpu0, load.rsx0);
-        if (spu.stuck) snprintf(tail, sizeof tail, ", SPUs stuck");
+        if (spu.stuck || load.ls_stuck) snprintf(tail, sizeof tail, ", SPUs stuck");
         else if (load.stop == STOP_HOT) snprintf(tail, sizeof tail, ", stop %d C", STOP_C);
         else if (load.stop == STOP_READ) snprintf(tail, sizeof tail, ", no reading");
         else if (load.stop == STOP_SPU) snprintf(tail, sizeof tail, ", SPU %d stopped", load.stop_spu);
@@ -673,7 +755,7 @@ static void cool_tile(void)
         snprintf(l1, sizeof l1, "Cell %d C, RSX %d C idle", cpu_now, rsx_now);
         if (fan_pct >= 0) snprintf(l2, sizeof l2, "fan %d%%, no load test yet", fan_pct);
         else snprintf(l2, sizeof l2, "no load test yet");
-        state_set("cooling", cpu_now >= 70 || rsx_now >= 70 ? DOT_WARN : DOT_OK, l1, l2);
+        state_set("cooling", idle_hot() ? DOT_WARN : DOT_OK, l1, l2);
     }
 }
 
@@ -708,6 +790,7 @@ int mod_cool_open(void)
     if (!fs_ok) return 0;                    /* no journal, no system call: the home screen says why */
     if (fan_prompt() < 0) return -1;
     run_job("Reading the temperatures and the fan policy", job_read);   /* the journaled calls, with the counter */
+    open_hot = cpu_now > rsx_now ? cpu_now : rsx_now;   /* a load test that starts over 3 C warmer is a warm start */
     if (family == FAMILY_NONE) family_load();
     if (family == FAMILY_NONE && family_screen() < 0) { cool_tile(); return -1; }   /* asked once */
     while (1) {
@@ -784,7 +867,12 @@ int mod_cool_open(void)
 
 /* ---- the quick check, the compat text ----------------------------------- */
 
-int cool_quick_ask(void) { return fan_prompt() < 0 ? -1 : 1; }
+/* The family too: the idle warning reads its range. */
+int cool_quick_ask(void)
+{
+    if (family == FAMILY_NONE) family_load();
+    return fan_prompt() < 0 ? -1 : 1;
+}
 
 void cool_quick(void)
 {
@@ -801,21 +889,27 @@ int cool_quick_end(char *line, int n)
     }
     if (fan_pct >= 0) snprintf(line, n, "Cell %d C, RSX %d C, fan %d%% at rest", cpu_now, rsx_now, fan_pct);
     else snprintf(line, n, "Cell %d C, RSX %d C at rest, fan not read", cpu_now, rsx_now);
-    return cpu_now >= 70 || rsx_now >= 70 ? DOT_WARN : DOT_OK;
+    return idle_hot() ? DOT_WARN : DOT_OK;
 }
 
-int cool_compat(char *out, int n)
+int cool_compat(char *out, int n, int detail)
 {
     if (!load.done) return 0;
-    char rise[16] = "?";
-    int rc = heat_rise(load.cpu, load.n, load.step), rr = heat_rise(load.rsx, load.n, load.step);
-    if (rc >= 0 || rr >= 0) snprintf(rise, sizeof rise, "%d", rc > rr ? rc : rr);
-    return snprintf(out, n, "%s; idle Cell %d RSX %d C; peak Cell %d RSX %d C; rise %s C/min; fan %d>%d%%; %s %d s%s, %s", family_name(), load.cpu0,
-                    load.rsx0, load.cpu_max, load.rsx_max, rise, load.fan0, load.fan_end, load.soak ? "soak" : "load", load.seconds,
-                    load.cancelled || load.stop ? " (stopped)" : "", load.spus_ran ? "6 SPUs" : "no SPUs");
+    const heat_report r = {family, load.cpu0, load.rsx0, load.cpu_peak, load.rsx_peak, load.cpu_max, load.rsx_max,
+                           load.rise_done ? load.rise : -1, load.fan0, load.fan_end, load.soak, load.seconds,
+                           load.cancelled || load.stop, load.spus_ran, load.warm};
+    return heat_compat_line(&r, detail, out, n);
 }
 
 /* ---- report ----------------------------------------------------------------- */
+
+/* A value in its format into s, or none when it is -1 (not read). */
+static const char *val(char *s, int n, int v, const char *fmt, const char *none)
+{
+    if (v < 0) return none;
+    snprintf(s, n, fmt, v);
+    return s;
+}
 
 /* The SPU leg in the report: the rate of each SPU, or why it was not used,
  * then the group's end (the terminate, the join). */
@@ -851,15 +945,15 @@ void mod_cool_report(void)
     const heat_family *hf = heat_family_get(family);
     rep_out("console model: %s%s%s\n", family_name(), hf ? ", " : "", hf ? hf->models : "");
     if (!load.done) return;
-    char tl[64];
+    char tl[64], fan[32] = "fan not read";
     temps_line(tl, sizeof tl, " -> max ");
-    if (load.soak) rep_out("soak test %d min, %d s%s: %s, fan %d -> %d%%\n", load.soak, load.seconds, load.cancelled || load.stop ? " (stopped)" : "", tl,
-                           load.fan0, load.fan_end);
-    else rep_out("load test %d s%s: %s, fan %d -> %d%%\n", load.seconds, load.cancelled || load.stop ? " (stopped)" : "", tl, load.fan0, load.fan_end);
+    if (load.fan0 >= 0 && load.fan_end >= 0) snprintf(fan, sizeof fan, "fan %d -> %d%%", load.fan0, load.fan_end);
+    if (load.soak) rep_out("soak test %d min, %d s%s: %s, %s\n", load.soak, load.seconds, load.cancelled || load.stop ? " (stopped)" : "", tl, fan);
+    else rep_out("load test %d s%s: %s, %s\n", load.seconds, load.cancelled || load.stop ? " (stopped)" : "", tl, fan);
     spu_report();
     if (load.soak) {
-        rep_out("soak: %d turns of %d s load and %d s memory; memory %ld passes over %d MB, %ld errors", load.turns, SOAK_LOAD_S, SOAK_MEM_S,
-                load.mem_passes, load.mem_blocks, load.mem_errors);
+        rep_out("soak: %d turns of %d s load and %d s memory, %d s of turn changes; memory %ld passes over %d MB, %ld errors", load.turns,
+                SOAK_LOAD_S, SOAK_MEM_S, (int)(load.paused / 1000000), load.mem_passes, load.mem_blocks, load.mem_errors);
         if (load.mem_errors) rep_out(" (the first at 0x%08lx)", load.mem_first);
         rep_out("; SPU local stores %d of %d tests ended, %u errors%s%s\n", load.ls_ok, load.ls_runs, load.ls_errors, load.ls_why[0] ? ", last: " : "",
                 load.ls_why);
@@ -870,11 +964,20 @@ void mod_cool_report(void)
     else if (load.stop == STOP_READ) rep_out("stop: two failed temperature reads in a row, at %d:%02d\n", load.stop_s / 60, load.stop_s % 60);
     else if (load.stop == STOP_SPU) rep_out("stop: SPU %d stopped reporting, at %d:%02d\n", load.stop_spu, load.stop_s / 60, load.stop_s % 60);
     rep_out("verdict: %s\n", verdict_text());
-    rep_out("paste: %s (idle %d C, peak %d C, rise %d C/min, fan %d%%; over the range:%s%s%s%s%s)\n", heat_paste_text(&paste), paste.idle, paste.peak,
-            paste.rise, paste.fan, paste.over & 1 ? " idle" : "", paste.over & 2 ? " peak" : "", paste.over & 4 ? " rise" : "",
-            paste.over & 8 ? " fan" : "", paste.over ? "" : " none");
-    rep_out("samples (every %d s): t Cell RSX fan\n", load.step);
+    rep_out("paste: %s", heat_paste_text(&paste));
+    if (heat_family_get(family)) {           /* the values against the ranges; without a model there is nothing to compare */
+        char v[4][24];
+        rep_out(" (idle %s, peak %s in the first %d s, rise %s, fan %s; over the range:%s%s%s%s%s%s)", val(v[0], sizeof v[0], paste.idle, "%d C", "not read"),
+                val(v[1], sizeof v[1], paste.peak, "%d C", "not read"), HEAT_PEAK_S, val(v[2], sizeof v[2], paste.rise, "%d C/min", "not measured"),
+                val(v[3], sizeof v[3], paste.fan, "%d%%", "not read"), paste.over & 1 ? " idle" : "", paste.over & 2 ? " peak" : "", paste.over & 4 ? " rise" : "",
+                paste.over & 8 ? " fan" : "", paste.over ? "" : " none", paste.flags & HEAT_WARM ? "; a warm start: idle and rise not counted" : "");
+    }
+    rep_out("\n");
+    rep_out("samples (every %d s, - not read): t Cell RSX fan\n", load.step);
     int every = load.step >= 10 ? 1 : 10 / load.step;   /* about one line per 10 s */
-    for (int k = 0; k < load.n; k += every)
-        rep_out("  %4d %3d %3d %3d\n", k * load.step, load.cpu[k], load.rsx[k], load.fan[k]);   /* -1 = not read */
+    for (int k = 0; k < load.n; k += every) {
+        char c[3][8];
+        rep_out("  %4d %3s %3s %3s\n", k * load.step, val(c[0], sizeof c[0], load.cpu[k], "%d", "-"), val(c[1], sizeof c[1], load.rsx[k], "%d", "-"),
+                val(c[2], sizeof c[2], load.fan[k], "%d", "-"));
+    }
 }

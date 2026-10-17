@@ -66,14 +66,6 @@ const char *ping_link_text(int link_type)
     return link_type >= 0 && link_type <= 6 ? t[link_type] : "unknown";
 }
 
-/* The limits are for the router on the same network, not the internet: a
- * cable answers in about a millisecond, Wi-Fi in a few. */
-#define LOSS_CHECK 5                         /* % */
-#define AVG_CHECK_US 20000
-#define JITTER_CHECK_US 10000
-#define RSSI_CHECK 40                        /* % */
-#define DNS_CHECK_MS 300
-
 /* The reason into why, and the level. */
 static int say(char *why, int n, int level, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
 static int say(char *why, int n, int level, const char *fmt, ...)
@@ -90,13 +82,13 @@ int ping_judge(const net_facts *f, char *why, int n)
     const ping_stats *p = &f->ping;
     if (!f->have_ip) return say(why, n, 2, "no address (no cable or Wi-Fi link, or no DHCP answer)");
     if (p->sent && !p->got) return say(why, n, 2, "the router did not answer one ping");
-    if (p->sent && p->loss_pct > LOSS_CHECK) return say(why, n, 1, "%d %% of the pings to the router were lost", p->loss_pct);
-    if (!f->wired && f->rssi >= 0 && f->rssi < RSSI_CHECK) return say(why, n, 1, "weak Wi-Fi signal (%d %%)", f->rssi);
+    if (p->sent && p->loss_pct > PING_LOSS_CHECK) return say(why, n, 1, "%d %% of the pings to the router were lost", p->loss_pct);
+    if (!f->wired && f->rssi >= 0 && f->rssi < PING_RSSI_CHECK) return say(why, n, 1, "weak Wi-Fi signal (%d %%)", f->rssi);
     if (f->wired && f->link_type >= 1 && f->link_type <= 5)
         return say(why, n, 1, "the cable link is %s, the PS3 port does 1000 Mbit/s full duplex", ping_link_text(f->link_type));
-    if (p->got && p->avg_us > AVG_CHECK_US) return say(why, n, 1, "slow router answers (%d ms on average)", p->avg_us / 1000);
-    if (p->got > 1 && p->jitter_us > JITTER_CHECK_US) return say(why, n, 1, "uneven router answers (%d ms of jitter)", p->jitter_us / 1000);
+    if (p->got && p->avg_us > PING_AVG_CHECK_US) return say(why, n, 1, "slow router answers (%d ms on average)", p->avg_us / 1000);
+    if (p->got > 1 && p->jitter_us > PING_JITTER_CHECK_US) return say(why, n, 1, "uneven router answers (%d ms of jitter)", p->jitter_us / 1000);
     if (f->dns_ms == -2) return say(why, n, 1, "the DNS lookup failed");
-    if (f->dns_ms > DNS_CHECK_MS) return say(why, n, 1, "slow DNS lookup (%d ms)", f->dns_ms);
+    if (f->dns_ms > PING_DNS_CHECK_MS) return say(why, n, 1, "slow DNS lookup (%d ms)", f->dns_ms);
     return say(why, n, 0, "%s", f->wired ? "the cable link and the router look fine" : "the Wi-Fi link and the router look fine");
 }

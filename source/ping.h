@@ -26,6 +26,15 @@ typedef struct {
 } ping_stats;
 void ping_calc(const int *us, int n, ping_stats *s);
 
+/* The verdict's limits, for the router on the same network, not the
+ * internet: a cable answers in about a millisecond, Wi-Fi in a few. The
+ * module's screen colours a value past its limit yellow. */
+#define PING_LOSS_CHECK 5                    /* % */
+#define PING_AVG_CHECK_US 20000
+#define PING_JITTER_CHECK_US 10000
+#define PING_RSSI_CHECK 40                   /* % */
+#define PING_DNS_CHECK_MS 300
+
 /* What the verdict reads. -1: not known (rssi on a cable, dns not run). */
 typedef struct {
     int have_ip;                             /* the console has an address */

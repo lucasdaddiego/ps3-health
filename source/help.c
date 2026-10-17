@@ -62,18 +62,27 @@ static int load_kept(char *title_s, int n)
 static void build_qr(void)
 {
     static uint8_t tmp[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_MAX_VERSION)];
-    static char url[2400], last_url[2400];
-    char title_s[96];
+    static char url[2400], last_url[2400], cool[2][224];
+    char title_s[96], v[200];
     qr_kept = !mod_drive_probed() && load_kept(title_s, sizeof title_s) == 0;
     if (!qr_kept) {
         compat_title(&D, title_s, sizeof title_s);
         compat_body(&D, qr_body, sizeof qr_body);
     }
+    /* The Cooling line is the body's last: in full, else short (this
+     * session's test), else left out, so that the link fits the code. */
+    int ncool = 0;
+    char *c = strstr(qr_body, "\ncooling: ");
+    if (c) {
+        snprintf(cool[ncool++], sizeof cool[0], "%s", c + 1);
+        c[1] = 0;
+        if (!qr_kept && cool_compat(v, sizeof v, 0) > 0) snprintf(cool[ncool++], sizeof cool[0], "cooling: %s\n", v);
+    }
+    const char *const alt[2] = {cool[0], cool[1]};
     /* A blank issue with title and body: the issue form (template=...) takes
      * field values on the web, but the GitHub mobile app, which catches the
      * link on a phone, fills only title and body. */
-    const form_field f[] = {{"body", qr_body}};
-    if (issue_form_url(NULL, title_s, f, 1, url, sizeof url) < 0) { qr_ok = 0; last_url[0] = 0; return; }
+    if (compat_fit_url(title_s, qr_body, sizeof qr_body, alt, ncool, url, sizeof url, COMPAT_QR_BYTES) < 0) { qr_ok = 0; last_url[0] = 0; return; }
     if (qr_ok && !strcmp(url, last_url)) return;
     snprintf(last_url, sizeof last_url, "%s", url);
     qr_ok = qrcodegen_encodeText(url, tmp, qr, qrcodegen_Ecc_LOW, 1, QR_MAX_VERSION, qrcodegen_Mask_AUTO, true);

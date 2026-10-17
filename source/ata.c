@@ -618,7 +618,7 @@ int compat_body(const drive_state *d, char *out, int n)
         compat_field(d, ids[k], v, sizeof v);
         j = app(out, n, j, "%s: %s\n", ids[k], v);
     }
-    if (cool_compat(v, sizeof v) > 0) j = app(out, n, j, "cooling: %s\n", v);
+    if (cool_compat(v, sizeof v, 1) > 0) j = app(out, n, j, "cooling: %s\n", v);   /* last: Help's QR code shortens or drops it first */
     return j;
 }
 

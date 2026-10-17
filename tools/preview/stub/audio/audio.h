@@ -10,11 +10,9 @@
 #define AUDIO_BLOCK_SAMPLES  256
 #define AUDIO_STATUS_READY   1
 #define AUDIO_STATUS_RUN     2
-#define AUDIO_STATUS_CLOSE   0x1010
 #define AUDIO_PORT_2CH       2
 #define AUDIO_PORT_8CH       8
 #define AUDIO_PORT_INITLEVEL 0x1000
-#define AUDIO_BLOCK_8        8
 #define AUDIO_BLOCK_16       16
 #define AUDIO_BLOCK_32       32
 

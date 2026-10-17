@@ -62,9 +62,13 @@ void state_load(void)
 
 /* Written when the text changed since the last good write: every return to
  * the home screen sets a tile, and an fsync'd write of the same bytes would
- * hold the UI thread. A failed write is tried again. */
+ * hold the UI thread. A failed write is tried again. While held, the tiles
+ * change in memory only. */
+static int state_held;
+
 static void state_save(void)
 {
+    if (state_held) return;
     static char t[2048], last[sizeof t];
     static int last_len = -1, last_rc;
     int j = 0;
@@ -79,6 +83,14 @@ static void state_save(void)
     last_rc = fs_write_file(STATE_FILE, t, j, 0);
     memcpy(last, t, (size_t)j);
     last_len = j;
+}
+
+void state_hold(void) { state_held = 1; }
+
+void state_flush(void)
+{
+    state_held = 0;
+    state_save();
 }
 
 void state_set(const char *key, int dot, const char *l1, const char *l2)

@@ -1,11 +1,15 @@
 /* The quick check, R1 on the home screen: the short tests that need no
  * answer, in one run. A SMART read of the drive (no self-test), the
- * temperatures and the fan duty, one pass of each memory test (the XDR, the
- * RSX memory, the SPU local stores), the network data and five pings to the
- * router. Each step is the module's own code, with its own journal entries,
- * and sets the module's tile as a normal run does. The steps run in one
+ * temperatures and the fan duty, one pass of each memory test (the XDR and
+ * the RSX memory with patterns 0 and 1 by turns, block by block; the SPU
+ * local stores), the network data and five pings to the router. Each step
+ * is the module's own code, with its own journal entries, and sets the
+ * module's tile as a normal run does. The steps run in one
  * thread while this screen draws them and a counter; CIRCLE stops after the
- * step that runs. One verdict screen at the end. */
+ * step that runs (its own flag: the step runs to its end). Quit Game cuts
+ * the step at once (job_cancel), and a cut step counts as not run: its
+ * result is not judged and its tile stays. One verdict screen at the end,
+ * with one write of state.txt for the four tiles. */
 #include <stdio.h>
 #include <string.h>
 #include <ppu-lv2.h>
@@ -24,13 +28,14 @@ static const struct {
 } steps[STEPS] = {
     {"Drive", "A SMART read: the attributes and the health line. No self-test.", drive_quick, drive_quick_end},
     {"Cooling", "The Cell and RSX temperatures and the fan duty, at rest.", cool_quick, cool_quick_end},
-    {"Memory", "One pattern over the XDR and the RSX memory, then the SPU local stores.", mem_quick, mem_quick_end},
+    {"Memory", "One pass over the XDR and the RSX memory, two patterns by turns, then the SPU local stores.", mem_quick, mem_quick_end},
     {"Network", "The connection data and five pings to the router.", network_quick, network_quick_end},
 };
 
 enum { S_WAIT, S_RUN, S_DONE, S_SKIP };
 static volatile int state[STEPS];
 static volatile int step_now = -1, all_done;
+static volatile int stop_after;              /* CIRCLE: no step after the one that runs */
 static int dot[STEPS];
 static char result[STEPS][160];
 
@@ -38,12 +43,12 @@ static void quick_thread(void *arg)
 {
     (void)arg;
     for (int k = 0; k < STEPS; k++) {
-        if (job_cancel) { state[k] = S_SKIP; continue; }
+        if (job_cancel || stop_after) { state[k] = S_SKIP; continue; }
         step_now = k;
         state[k] = S_RUN;
         job_set_percent(-1);
         steps[k].run();
-        state[k] = S_DONE;
+        state[k] = job_cancel ? S_SKIP : S_DONE;   /* cut by a quit: not judged */
     }
     __sync_synchronize();
     all_done = 1;
@@ -82,7 +87,7 @@ static int intro(void)
         begin_frame();
         title();
         text(MG, TOP, F_MED, WHITE, "Quick check");
-        text_fit(MG, TOP + 52, F_BODY, GREY, SW - 2 * MG, "%s", "The short tests that need no answer, in one run: a few minutes, most of it the RSX memory.");
+        text_fit(MG, TOP + 52, F_BODY, GREY, SW - 2 * MG, "%s", "The short tests that need no answer, in one run: under a minute.");
         draw_steps(TOP + 110, 0, 0);
         status_line("Each step writes to the journal before it runs, as in its module. The modules have the long tests.", GREY);
         footer("CROSS start  CIRCLE home  START exit");
@@ -96,7 +101,7 @@ static void run_steps(void)
 {
     sys_ppu_thread_t t;
     u64 ret;
-    job_cancel = 0;
+    job_cancel = stop_after = 0;
     all_done = 0;
     step_now = -1;
     s64 t0 = sysGetSystemTime();
@@ -110,7 +115,8 @@ static void run_steps(void)
     }
     while (!all_done) {
         read_pad();
-        if (quit || (pressed & BTN_CIRCLE)) job_cancel = 1;
+        if (quit) job_cancel = 1;
+        if (pressed & BTN_CIRCLE) stop_after = 1;
         double sec = (double)(sysGetSystemTime() - t0) / 1e6;
         begin_frame();
         title();
@@ -118,29 +124,33 @@ static void run_steps(void)
         text(x + 32, TOP, F_MED | TNUM, GREY, "%.1f s", sec);
         text_fit(MG, TOP + 52, F_BODY, GREY, SW - 2 * MG, "%s", "The counter runs while the console works. If it stops, the console froze: the next start skips that step.");
         draw_steps(TOP + 110, sec, 0);
-        footer(job_cancel ? "Stopping after this step ..." : "CIRCLE stop after this step");
+        footer(stop_after || job_cancel ? "Stopping after this step ..." : "CIRCLE stop after this step");
         ui_flip();
     }
     sysThreadJoin(t, &ret);
     pressed = 0;                             /* a button still down is not a new press */
 }
 
-/* The results: a row per step and the verdict. 0 home, -1 exit. */
+/* The results: a row per step and the verdict. A step that gives no dot
+ * (DOT_NONE: the network did not start) did not run its test. The tiles
+ * go to state.txt in one write. 0 home, -1 exit. */
 static int verdict(void)
 {
-    char bad[96] = "", warn[96] = "", msg[200];
-    int worst = DOT_OK;
+    char bad[96] = "", warn[96] = "", none[96] = "", msg[200];
+    int stopped = stop_after || job_cancel;
+    state_hold();
     for (int k = 0; k < STEPS; k++) {
         if (state[k] != S_DONE) { dot[k] = DOT_NONE; continue; }
         dot[k] = steps[k].end(result[k], sizeof result[k]);
-        char *list = dot[k] == DOT_BAD ? bad : dot[k] == DOT_WARN ? warn : NULL;
+        char *list = dot[k] == DOT_BAD ? bad : dot[k] == DOT_WARN ? warn : dot[k] == DOT_NONE ? none : NULL;
         if (list) snprintf(list + strlen(list), sizeof bad - strlen(list), "%s%s", list[0] ? ", " : "", steps[k].name);
-        if (dot[k] > worst) worst = dot[k];
     }
+    state_flush();
     write_report();                          /* every step's result reaches the file */
     if (bad[0]) snprintf(msg, sizeof msg, "Problem found: %s. Open the module for the details and the long tests.", bad);
     else if (warn[0]) snprintf(msg, sizeof msg, "Check: %s. Open the module for the details and the long tests.", warn);
-    else if (job_cancel) snprintf(msg, sizeof msg, "Stopped: no problem in the steps that ran.");
+    else if (stopped) snprintf(msg, sizeof msg, "Stopped: no problem in the steps that ran.");
+    else if (none[0]) snprintf(msg, sizeof msg, "No problem found in the steps that ran. Not run: %s.", none);
     else snprintf(msg, sizeof msg, "No problem found in the quick check. The modules have the long tests.");
     while (1) {
         read_pad();
@@ -150,7 +160,7 @@ static int verdict(void)
         title();
         text(MG, TOP, F_MED, WHITE, "Quick check: result");
         draw_steps(TOP + 110 - 52, 0, 1);
-        status_line(msg, bad[0] ? RED : warn[0] ? YELLOW : job_cancel ? GREY : GREEN);
+        status_line(msg, bad[0] ? RED : warn[0] ? YELLOW : stopped ? GREY : GREEN);
         footer("CIRCLE home  START exit");
         report_footnote();
         ui_flip();
