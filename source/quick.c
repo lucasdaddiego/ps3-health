@@ -2,14 +2,14 @@
  * answer, in one run. A SMART read of the drive (no self-test), the
  * temperatures and the fan duty, one pass of each memory test (the XDR and
  * the RSX memory with patterns 0 and 1 by turns, block by block; the SPU
- * local stores), the network data and five pings to the router. Each step
- * is the module's own code, with its own journal entries, and sets the
- * module's tile as a normal run does. The steps run in one
+ * local stores), the network data and five pings to the router, and one
+ * exchange with the time server. Each step is the module's own code, with
+ * its own journal entries, and sets the module's tile as a normal run does. The steps run in one
  * thread while this screen draws them and a counter; CIRCLE stops after the
  * step that runs (its own flag: the step runs to its end). Quit Game cuts
  * the step at once (job_cancel), and a cut step counts as not run: its
  * result is not judged and its tile stays. One verdict screen at the end,
- * with one write of state.txt for the four tiles. */
+ * with one write of state.txt for the five tiles and the check's own. */
 #include <stdio.h>
 #include <string.h>
 #include <lv2/systime.h>
@@ -18,7 +18,7 @@
 #include <ps3gfx/ui.h>
 #include "report.h"
 
-#define STEPS 4
+#define STEPS 5
 
 static const struct {
     const char *name, *what;
@@ -29,6 +29,7 @@ static const struct {
     {"Cooling", "The Cell and RSX temperatures and the fan duty, at rest.", cool_quick, cool_quick_end},
     {"Memory", "One pass over the XDR and the RSX memory, two patterns by turns, then the SPU local stores.", mem_quick, mem_quick_end},
     {"Network", "The connection data and five pings to the router.", network_quick, network_quick_end},
+    {"Clock", "The console's clock against the time server: one exchange.", clock_quick, clock_quick_end},
 };
 
 enum { S_WAIT, S_RUN, S_DONE, S_SKIP };
@@ -56,7 +57,7 @@ static void quick_thread(void *arg)
 
 static u32 dot_color(int d) { return d == DOT_OK ? GREEN : d == DOT_WARN ? YELLOW : d == DOT_BAD ? RED : GREY; }
 
-/* The four steps as rows: a dot or the spinner, the name, what it does or its result. */
+/* The five steps as rows: a dot or the spinner, the name, what it does or its result. */
 static void draw_steps(float y, double sec, int results)
 {
     float w = SW - 2 * MG, rh = (BOTTOM - y - 8) / STEPS;
@@ -136,15 +137,24 @@ static void run_steps(void)
  * go to state.txt in one write. 0 home, -1 exit. */
 static int verdict(void)
 {
-    char bad[96] = "", warn[96] = "", none[96] = "", msg[200];
-    int stopped = 0;
+    char bad[96] = "", warn[96] = "", none[96] = "", msg[200], l1[48], l2[48];
+    int stopped = 0, ran = 0;
     state_hold();
     for (int k = 0; k < STEPS; k++) {
         if (state[k] != S_DONE) { dot[k] = DOT_NONE; stopped = 1; continue; }
         dot[k] = steps[k].end(result[k], sizeof result[k]);
+        if (dot[k] != DOT_NONE) ran++;       /* a step without a dot did not run its test */
         char *list = dot[k] == DOT_BAD ? bad : dot[k] == DOT_WARN ? warn : dot[k] == DOT_NONE ? none : NULL;
         if (list) snprintf(list + strlen(list), sizeof bad - strlen(list), "%s%s", list[0] ? ", " : "", steps[k].name);
     }
+    /* the check's own tile: the worst dot of the steps that ran */
+    if (bad[0]) snprintf(l1, sizeof l1, "Problem: %s", bad);
+    else if (warn[0]) snprintf(l1, sizeof l1, "Check: %s", warn);
+    else if (stopped) snprintf(l1, sizeof l1, "Stopped, no problem so far");
+    else snprintf(l1, sizeof l1, "No problem found");
+    if (none[0]) snprintf(l2, sizeof l2, "%d of %d steps ran, not run: %s", ran, STEPS, none);
+    else snprintf(l2, sizeof l2, "%d of %d steps ran", ran, STEPS);
+    state_set("quick", bad[0] ? DOT_BAD : warn[0] ? DOT_WARN : DOT_OK, l1, l2);
     state_flush();
     write_report();                          /* every step's result reaches the file */
     if (bad[0]) snprintf(msg, sizeof msg, "Problem found: %s. Open the module for the details and the long tests.", bad);

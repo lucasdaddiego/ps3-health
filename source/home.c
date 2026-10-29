@@ -1,6 +1,7 @@
-/* The home screen: eight tiles, four by two, with the last result of each
- * module, from APP_DIR/state.txt. It sends no command to the hardware. R1
- * opens the quick check (quick.c). */
+/* The home screen: ten tiles, five by two, with the last result of each
+ * module and of the quick check, from APP_DIR/state.txt. It sends no command
+ * to the hardware. R1, or CROSS on its tile, opens the quick check
+ * (quick.c). */
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -20,14 +21,20 @@ const module modules[MODULE_COUNT] = {
     {"Network", "network", "Link, router ping, DNS time.", mod_network_open, mod_network_report},
     {"Transfer", "transfer", "USB stick, internet, LAN speed.", mod_net_open, mod_net_report},
     {"Memory", "memory", "XDR, RSX memory, SPU local stores.", mod_mem_open, mod_mem_report},
+    {"Clock", "clock", "Time server offset, drift, a reset.", mod_clock_open, mod_clock_report},
 };
 
-static tile_state tiles[MODULE_COUNT];
+/* The tenth tile: the quick check, with the modules' tile fields and no open or report. */
+static const module quick_tile = {"Quick check", "quick", "The short tests of five modules in one run.", NULL, NULL};
+#define TILES (MODULE_COUNT + 1)
+static const module *tile_of(int k) { return k < MODULE_COUNT ? &modules[k] : &quick_tile; }
+
+static tile_state tiles[TILES];
 
 static int tile_index(const char *key)
 {
-    for (int k = 0; k < MODULE_COUNT; k++)
-        if (!strcmp(modules[k].key, key)) return k;
+    for (int k = 0; k < TILES; k++)
+        if (!strcmp(tile_of(k)->key, key)) return k;
     return -1;
 }
 
@@ -72,9 +79,9 @@ static void state_save(void)
     static char t[2048], last[sizeof t];
     static int last_len = -1, last_rc;
     int j = 0;
-    for (int k = 0; k < MODULE_COUNT; k++) {
+    for (int k = 0; k < TILES; k++) {
         if (!tiles[k].dot && !tiles[k].l1[0]) continue;
-        j += snprintf(t + j, sizeof t - j, "%s|%d|%s|%s|%s\n", modules[k].key, tiles[k].dot, tiles[k].when, tiles[k].l1,
+        j += snprintf(t + j, sizeof t - j, "%s|%d|%s|%s|%s\n", tile_of(k)->key, tiles[k].dot, tiles[k].when, tiles[k].l1,
                       tiles[k].l2);
         if (j >= (int)sizeof t - 1) break;
     }
@@ -175,7 +182,7 @@ static void icon(int k, float x, float y, u32 c)
         line(x + 50, y + 6, x + 50, y + 50, 5, c);
         tri(x + 50, y + 66, x + 37, y + 46, x + 63, y + 46, c);
         break;
-    default:                                 /* a memory chip with its pins */
+    case 7:                                  /* a memory chip with its pins */
         round_frame(x + 14, y + 14, 44, 44, 5, 4, c);
         rect(x + 28, y + 28, 16, 16, c);
         for (int i = 0; i < 3; i++) {
@@ -186,10 +193,22 @@ static void icon(int k, float x, float y, u32 c)
             rect(x + o, y + 58, 4, 11, c);
         }
         break;
+    case 8:                                  /* a clock face: the ring, the hands at ten past ten */
+        ring(x + 36, y + 36, 31, 4, c);
+        line(x + 36, y + 36, x + 36, y + 14, 4, c);
+        line(x + 36, y + 36, x + 52, y + 46, 4, c);
+        disc(x + 36, y + 36, 4, c);
+        for (int i = 0; i < 4; i++) rect(x + 34 + (i == 1 ? 24 : i == 3 ? -24 : 0), y + 34 + (i == 0 ? -24 : i == 2 ? 24 : 0), 4, 4, c);
+        break;
+    default:                                 /* a tick in a ring: the quick check */
+        ring(x + 36, y + 36, 31, 4, c);
+        line(x + 20, y + 38, x + 31, y + 49, 5, c);
+        line(x + 31, y + 49, x + 53, y + 25, 5, c);
+        break;
     }
 }
 
-#define COLS 4
+#define COLS 5
 
 static void tile_box(int k, float *x, float *y, float *w, float *h)
 {
@@ -200,27 +219,29 @@ static void tile_box(int k, float *x, float *y, float *w, float *h)
     *y = TOP + (k / COLS) * (*h + gap);
 }
 
-/* The icon and the name on top with the description beside the icon, the
- * result at the foot: line 1 in the body font, line 2 small on up to two
- * lines, then the date. At the smallest visible area a tile is 362 x 296. */
+/* The icon and the name on top, the description under them, the result at
+ * the foot: line 1 in the body font, line 2 small on up to two lines, then
+ * the date. At the smallest visible area a tile is 285 x 296. */
 static void draw_tile(int k, int selected)
 {
     float x, y, w, h;
     tile_box(k, &x, &y, &w, &h);
     const tile_state *t = &tiles[k];
+    const module *m = tile_of(k);
     round_rect(x, y, w, h, 18, selected ? PANEL2 : PANEL);
     if (selected) round_frame(x - 4, y - 4, w + 8, h + 8, 22, 3, WHITE);
-    icon(k, x + 24, y + 24, selected ? WHITE : BLUE);
-    text_fit(x + 112, y + 22, F_MED, WHITE, w - 170, "%s", modules[k].name);
-    if (t->dot) disc(x + w - 36, y + 42, 11, dot_color(t->dot));
-    else ring(x + w - 36, y + 42, 9, 3, DIM);    /* hollow: not run yet */
-    text_wrap(x + 112, y + 68, F_SMALL, selected ? GREY : DIM, w - 132, 2, modules[k].desc);   /* beside the icon */
-    float tw = w - 48, ty = y + h - 148;     /* the result sits at the foot of the tile */
+    icon(k, x + 20, y + 24, selected ? WHITE : BLUE);
+    int nf = w < 320 ? F_BODY : F_MED;       /* the name: the body font on a narrow tile (the smallest visible area) */
+    text_fit(x + 100, y + 22 + base_dy(F_MED, nf), nf, WHITE, w - 128, "%s", m->name);
+    if (t->dot) disc(x + w - 22, y + 40, 8, dot_color(t->dot));
+    else ring(x + w - 22, y + 40, 6, 3, DIM);    /* hollow: not run yet */
+    text_wrap(x + 24, y + 104, F_SMALL, selected ? GREY : DIM, w - 48, 2, m->desc);
+    float tw = w - 48, ty = y + h - 130;     /* the result sits at the foot of the tile */
     if (t->dot || t->l1[0]) {
         text_fit(x + 24, ty, F_BODY, WHITE, tw, "%s", t->l1);
-        text_wrap(x + 24, ty + 40, F_SMALL, GREY, tw, 2, t->l2);
-        text(x + 24, y + h - 38, F_SMALL, DIM, "Last run %s", t->when);
-    } else text(x + 24, ty + 40, F_BODY, GREY, "Not run yet");
+        text_wrap(x + 24, ty + 36, F_SMALL, GREY, tw, 2, t->l2);
+        text(x + 24, y + h - 34, F_SMALL, DIM, "Last run %s", t->when);
+    } else text(x + 24, ty + 36, F_BODY, GREY, "Not run yet");
 }
 
 static void draw_verdict(void)
@@ -248,16 +269,17 @@ int home_screen(int sel)
 {
     char msg[160] = "";
     u32 msg_color = WHITE;
-    if (sel < 0 || sel >= MODULE_COUNT) sel = 0;
+    if (sel < 0 || sel >= TILES) sel = 0;
     while (1) {
         read_pad();
         if (quit || (pressed & BTN_START)) return -1;
-        if (pressed & BTN_CROSS) return sel;
+        if ((pressed & BTN_CROSS) && sel < MODULE_COUNT) return sel;
+        int quick = ((pressed & BTN_CROSS) && sel == TILE_QUICK) || (pressed & BTN_R1);
         if ((pressed & BTN_TRIANGLE) && help_screen() < 0) return -1;
-        if ((pressed & BTN_R1) && fs_ok && quick_screen() < 0) return -1;   /* the quick check needs the journal, as Drive and Cooling */
+        if (quick && fs_ok && quick_screen() < 0) return -1;   /* the quick check needs the journal, as Drive and Cooling */
         if (pressed & BTN_RIGHT) sel = sel % COLS == COLS - 1 ? sel - (COLS - 1) : sel + 1;
         if (pressed & BTN_LEFT) sel = sel % COLS == 0 ? sel + (COLS - 1) : sel - 1;
-        if (pressed & (BTN_UP | BTN_DOWN)) sel = (sel + COLS) % MODULE_COUNT;
+        if (pressed & (BTN_UP | BTN_DOWN)) sel = (sel + COLS) % TILES;
         if (fs_ok && gesture(BTN_SQUARE) == BTN_SQUARE) {   /* no writable folder: nothing to clear */
             int rc = journal_clear();
             if (rc == 0) snprintf(msg, sizeof msg, "Freeze journal cleared. Skipped and frozen calls run again. The Drive steps run again after a restart.");
@@ -268,7 +290,7 @@ int home_screen(int sel)
         begin_frame();
         title();
         if (console_fw[0]) title_right("Firmware %s", console_fw);
-        for (int k = 0; k < MODULE_COUNT; k++) draw_tile(k, k == sel);
+        for (int k = 0; k < TILES; k++) draw_tile(k, k == sel);
         if (!fs_ok) {                        /* the file test codes take the line of the report path */
             if (msg[0]) status_line(msg, msg_color);
             else status_line("The app cannot write " APP_DIR ": no journal, so Drive, Cooling and Audio stay closed.", RED);

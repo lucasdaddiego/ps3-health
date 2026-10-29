@@ -3,7 +3,7 @@
 <img src="docs/icon.png" width="320" alt="PS3 Health icon">
 
 A PS3 homebrew app that checks the console's hardware from the TV, with no PC
-and no opening the console. Eight modules behind one home screen:
+and no opening the console. Nine modules behind one home screen:
 
 - **Drive:** IDENTIFY and SMART of the internal HDD or SSD, the attribute table
   with vendor names, a health line, a trend of every full read (power-on hours,
@@ -16,7 +16,9 @@ and no opening the console. Eight modules behind one home screen:
 - **Controller:** stick rest offset (drift) and circle coverage, every button
   with its pressure, the sixaxis sensors, the rumble motors.
 - **Display:** the video output, the visible area of your TV, full-screen
-  test patterns (with a 1-pixel stripe test for TV scaling) and a lag timer.
+  test patterns (with a 1-pixel stripe test for TV scaling), a lag timer, and
+  a TV page with what the TV told the console (the port, the colour space and
+  range, the EDID latency, the primaries and gamma, the modes it accepts).
 - **Audio:** a beep on the left and on the right speaker, a walk over the
   eight channels of 7.1, and a sweep from 20 Hz to 20 kHz; you answer heard or
   not heard.
@@ -26,9 +28,12 @@ and no opening the console. Eight modules behind one home screen:
   HTTP, and a LAN test where the app is the server and a PC sends it data.
 - **Memory:** pattern tests on the user memory (XDR), on the RSX memory
   (GDDR3), and on the local store of each of the six SPUs.
+- **Clock:** the console's clock against a time server (one NTP exchange over
+  UDP), the drift of the clock between runs, and a warning when the clock was
+  reset (a flat clock battery starts it at 2000).
 
-R1 on the home screen runs the quick check: the short tests that need no
-answer, in one run, with one verdict. Help (TRIANGLE on the home screen) has a
+R1 on the home screen, or its own tile, runs the quick check: the short tests
+that need no answer, in one run, with one verdict. Help (TRIANGLE on the home screen) has a
 QR code that opens a prefilled GitHub issue with the compatibility report, and
 a short guide.
 
@@ -72,13 +77,21 @@ temperatures, the SPU rates, the sticks and the memory size are simulated.
 <td><img src="docs/help.png" alt="Help screen"><br>Help: the QR code that opens a prefilled GitHub issue, and a short guide.</td>
 <td><img src="docs/trend.png" alt="Drive, trend page"><br>Drive, trend page: the full reads of this drive, newest first, and the change since the first one.</td>
 </tr>
+<tr>
+<td><img src="docs/clock.png" alt="Clock module"><br>Clock: the console's clock against the time server, and its drift since the last runs.</td>
+<td><img src="docs/tv.png" alt="Display, TV page"><br>Display, TV page: what the TV told the console over HDMI.</td>
+</tr>
 </table>
 
 ## Status and compatibility
 
 The app was tested on one console: a PS3 Super Slim on **HFW 4.93 with PS3HEN
 3.6.0** and a Dahua V800 1 TB SATA SSD. The table lists the versions tested on
-the console. 2.2.1 is 2.2.0 on ps3gfx 57b2eb0, the library's fixes of its
+the console. 2.3.0 adds the Clock module (the clock against a time server,
+the drift between runs, the reset warning), the TV page of the Display module
+(what the TV told the console), a fifth step of the quick check (the clock)
+and a tile for the quick check, so the home screen is five tiles by two.
+2.2.1 is 2.2.0 on ps3gfx 57b2eb0, the library's fixes of its
 two reviews of 2026-10-17: a two-press button (SQUARE twice, R2 twice) fires
 only on its own button and any other button cancels it, a controller that
 goes away releases its buttons, the freeze journal writes a failed record
@@ -121,6 +134,7 @@ drive and the result, and it goes into this table.
 
 | Model | Firmware | Drive | Version | Result | Source |
 |---|---|---|---|---|---|
+| Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.3.0 | rc1 to rc3, three rounds through webMAN's virtual pad and a camera on the TV: the 5x2 home; Clock against pool.ntp.org (stratum 3, round trip 14 to 16 ms, 4 of 4 replies): the console 35.20 s ahead of the server, a yellow verdict, the timer check -7 us in 35 s (the wall clock runs from the system timer), and 25 min later the drift card: -1.47 s per day (-17 ppm); then the clock set from the XMB (Date and Time Settings, Set via Internet: "completed", so the firmware's server still answers on HEN) and rc3's Clock 30 min after: +0.38 s, stratum 2, and the drift card's "the clock was set" line with the -35.56 s step instead of a rate; the TV page (HDMI; RGB, YUV and xvYCC; full range; no EDID latency; 1 HDCP key; red 0.670 0.314, green 0.271 0.645, blue 0.152 0.054, white 0.281 0.284, gamma 2.20; 13 modes, 1080p to 480p); the quick check with its five steps in under a minute (Drive health OK at 1364 h, Cell 58 C, RSX 55 C, fan 25 %, XDR 197 MB and RSX 231 MB with no error, SPU ok, the router 1.9 ms with no loss, the clock step yellow); the journal 24 calls ok, no freeze; the exit by START; USB, LAN, Audio and Controller not run | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.2.1 | rc3, after the console checks of the second review's fixes (Claude's round through webMAN's virtual pad and a camera on the TV, then the author's own session): the start to the home screen; the memory tests (XDR 197 MB, read and compare 530 MB/s, was 347; RSX 231 MB read back by the RSX's copy, 201 MB/s, was 126; XDR still 197 MB after the RSX test; the six SPU local stores in 0.16 s; no errors); the 2-minute load test (Cell 61 to 68 C, RSX 57 to 63 C, 6 C a minute, fan 25 %, about 165 M loops a second on each SPU); the drive reads, SMART and a self-test to its result; Audio's tones, the 8-speaker walk and the 12 s sweep heard; Network (cable, 1000 Mbit/s full duplex, ICMP 5 of 5, 1.8 ms); internet 34.5 Mbit/s; the display (1080p, visible area 1920 x 1080); "flawless" in the author's words; rc1 and rc2 before it: the 4x2 home and the first screen of every tile but Drive and Help, the journal clear cancelled by RIGHT; USB and LAN not run | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.2.0 | through webMAN's virtual pad and a camera on the TV: the 4x2 home, Network (cable, 1000 Mbit/s full duplex, ICMP to the router 20 of 20, 1.9 ms, jitter 0.1 ms, DNS 27 ms), the quick check (all four steps ok in under 30 s), Audio (the 8-channel port at 48 kHz, the sweep played; no answers given), the 2-minute load test (Cell 60 to 67 C, RSX 56 to 62 C, fan 25 %) with the super slim paste estimate, the 30-minute soak (Cell 61 to 71 C, RSX 57 to 65 C, 846 memory passes and 6 SPU local-store turns, no error; rc4 with the new loops: 1266 passes, Cell 59 to 71 C, no error), the memory tests on rc4 (XDR 197 MB in kernel pages, write 782 MB/s, read and compare 347 MB/s; RSX 231 MB read back by the RSX's copy at 126 MB/s, 10 MB/s through the mapping on rc3; the SPU local stores after an XDR test, no ENOMEM), the warm-start estimate, the masked serial on the Drive screen, the life-left line ("5 days of reads, it needs 14"); the journal 135 calls ok in 43 min (rc1) and 140 in 37 min (rc4), no freeze; the controller, the display patterns, USB, LAN and the Audio answers not run | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.1.0 | the drive reads and SMART, the extended self-test to its result (about 43 s), the trend page, internet (34.7 Mbit/s), the memory tests (XDR 194 MB, RSX 231 MB, no errors) and the SPU local-store test (6 of 6 SPUs, no errors), the 2-minute load test with the six SPUs (about 165 M loops a second each; Cell max 65 C, RSX 60 C, fan 25 %); the journal 48 calls ok; one new start right after a full session froze the console once, not seen again in 10 later starts (after the network, memory and cooling tests, a full session, and with the files read over FTP); the controller, the display, USB and LAN not run | author |
@@ -158,12 +172,13 @@ edges until the four arrow tips touch the edges of the picture (D-pad: both
 sides together; SQUARE: one edge at a time), then CROSS. CIRCLE keeps the
 default, 93 % of the screen. The Display module can change it later.
 
-The home screen: eight tiles, four by two, each with what the module checks, a
-dot (green ok, yellow check, red problem, hollow when the module never ran),
+The home screen: ten tiles, five by two, one per module and one for the quick
+check, each with what it checks, a
+dot (green ok, yellow check, red problem, hollow when it never ran),
 two lines from the last result and its date (in the console's time zone), and
 a verdict line under them. D-pad chooses (LEFT and RIGHT wrap around a row, UP
 and DOWN change the row), CROSS opens a module, CIRCLE in a module goes back
-home, START exits. R1 runs the quick check (below). TRIANGLE opens Help: the QR code of the compatibility
+home, START exits. R1, or CROSS on its tile, runs the quick check (below). TRIANGLE opens Help: the QR code of the compatibility
 report (it opens a prefilled GitHub issue on a phone; nothing is sent until
 you submit it) and a short guide. SELECT copies the report, `journal.txt` and
 `trend.txt` to the first USB stick found, into `ps3_health/`. When the console
@@ -176,8 +191,9 @@ bottom of each screen shows the controller's own symbols.
 
 ### Quick check
 
-R1 on the home screen first shows the four steps; CROSS runs them in order,
-each with the module's own code and journal entries:
+R1 on the home screen (or CROSS on the quick check tile) first shows the five
+steps; CROSS runs them in order, each with the module's own code and journal
+entries:
 1. Drive: the drive read of the session, or a new SMART read (no self-test,
    no first-run prompt of the optional logs).
 2. Cooling: the temperatures and the fan duty at rest.
@@ -187,14 +203,18 @@ each with the module's own code and journal entries:
 4. Network: the connection data and five pings to the router. When the
    network did not start (or its start froze before), the step runs no test
    and shows "not run" with no dot, as the module gives no verdict then.
+5. Clock: one exchange with the time server (four packets, about a second),
+   the clock's offset and its drift since the last run. Without the network,
+   as the Network step.
 
 A first-run prompt that was never answered (the fan, the SPUs) comes before
 the run. The steps run behind a counter; CIRCLE stops after the step that
 runs (that step runs to its end), and the rest show "not run". CIRCLE during
 the last step skips nothing: the verdict is the normal one. One verdict
 screen lists each step with its dot and result, and each module's tile changes
-as after a normal run (one write of `state.txt` for all four). The whole check
-takes under a minute (under 30 s on the author's console). Without a writable
+as after a normal run (one write of `state.txt` for all five and the check's
+own tile, which keeps the verdict and the number of steps that ran). The whole
+check takes under a minute (under 30 s on the author's console). Without a writable
 app folder there is no journal, and R1 does nothing.
 
 ### Drive
@@ -354,6 +374,18 @@ scales the picture, overscan on), and a lag pattern with a millisecond timer
 and a moving bar to film next to the source; CROSS there flashes one white
 frame.
 
+RIGHT opens the TV page: what the TV told the console when it was connected,
+read once per session through the system's video library (journaled as
+`display_tv`). The port (HDMI, component, composite, D-terminal, RGB, SCART,
+D-sub), its state, the colour space (RGB, YUV, xvYCC), the RGB range (full,
+0 to 255, or limited, 16 to 235), the latency the TV's EDID declares (most
+declare none), the number of HDCP receiver keys (the count only), the colour
+primaries and the white point as CIE 1931 x and y (fractions of 1024 in the
+EDID; Rec. 709 is red 0.640 0.330, white 0.313 0.329) with the gamma, and the
+list of modes the TV accepts (resolution, progressive or interlaced, aspect,
+refresh rates). The report has the same lines. The system's library gives no
+TV name and no audio device data: the page says what it cannot show.
+
 ### Audio
 
 Every sound plays at -18 dBFS with a fade at each end, so nothing clicks; set
@@ -480,6 +512,40 @@ itself. The first use of the SPUs, here or in the Cooling load test, asks
 before they run (a first-run prompt, see Safety). Without a writable app
 folder there is no journal, and the SPU test does not run.
 
+### Clock
+
+The console keeps its clock on a small battery; when it goes flat (old
+consoles), the clock starts at 2000 and the system asks for the date at each
+boot. The module checks the clock against a time server and keeps the result,
+so the next run shows the drift.
+
+The open starts the network (as Transfer and Network do) and asks the time
+server: four NTP packets over UDP to port 123, 1.5 s each, 200 ms apart; the
+reply with the shortest round trip counts (RFC 5905: the offset is the
+server's clock minus the console's, the round trip the time on the wire,
+measured on the system timer). The server is `pool.ntp.org` through the
+console's resolver, or the first line of `ntp.txt` in the app folder (a name
+or an address). CROSS asks again. The exchange is one journaled call
+(`clock_ntp`); a server that answers with a kiss-o'-death (stratum 0) ends
+it. The screen: the local time (the console's zone setting, as the report's
+console line), the UTC time, the time since power on, the offset large with
+the server, its address, the round trip, the stratum and the four samples;
+after 10 s a timer check, the wall clock against the system timer since the
+open (a difference means the system runs the clock from another source than
+its timer). Each result is one line in `clock.txt`; the drift card compares
+the new offset with the last line (at least 10 min apart): seconds per day
+and parts per million, positive when the console's clock runs fast, over the
+span since that line, and lists the last results. A rate past 200 ppm (a
+quartz clock stays under 50) means the clock was set between the runs: the
+card says so with the step, and the drift starts again from this result.
+
+The verdict: no problem within 2 s of the server; check past 2 s, or when
+no reply came (port 123 is blocked on some networks); problem past 60 s, or
+when the clock is before 2010 (no PS3 firmware is older: the clock was
+reset), each with "set the date and time in the system settings". The tile
+keeps the offset and the drift. The report section `clock` has the console's
+clock, the zone, the server and its samples, the drift and the verdict.
+
 ### Files on the console
 
 In `/dev_hdd0/tmp/ps3_health/`:
@@ -495,6 +561,12 @@ In `/dev_hdd0/tmp/ps3_health/`:
 - `family.txt` — the console family for the paste estimate: `fat`, `slim`,
   `superslim`, or `unknown` when the question was skipped.
 - `net_url.txt` — optional, the `http://` URL for the download test.
+- `ntp.txt` — optional, the time server of the Clock module (a name or an
+  address) instead of `pool.ntp.org`.
+- `clock.txt` — one line per answer of the time server: the console's clock
+  (UTC seconds), the offset and the round trip in ms, the server
+  (`1791460801 301 16 pool.ntp.org`). The Clock module reads the last 16 KB;
+  a file that reached it starts again from its last 8 lines.
 - `identify.bin`, `smart.bin`, `thresh.bin`, `selftest.bin`, `errlog.bin`,
   `devstat.bin`, `phy.bin`, `devinfo.bin` — the raw sectors of the last drive
   read. `identify.bin` holds the full serial number and the WWN: do not attach
@@ -553,12 +625,14 @@ normal file calls, the Transfer and Network modules the normal socket calls
 (the Network module's ping a raw ICMP socket, else a TCP connect) and the
 netctl reads, the Memory
 module's XDR and RSX tests and the soak test's memory turns their own
-allocations, the Display module the video state read, the Audio module one
+allocations, the Display module the video state read and the TV data read,
+the Clock module a UDP socket to the time server, the Audio module one
 port of the system's audio library (calls into the firmware's library, not
-syscalls). The network start (the first open of Transfer or Network), its end
-at the exit, the Network module's connection reads, the ICMP run, the audio
-start and end, each turn of the soak test and the copy to a USB stick (SELECT)
-are journaled too. (Raw sector
+syscalls). The network start (the first open of Transfer, Network or Clock),
+its end at the exit, the Network module's connection reads, the ICMP run, the
+Clock module's exchange (`clock_ntp`), the TV data read (`display_tv`), the
+audio start and end, each turn of the soak test and the copy to a USB stick
+(SELECT) are journaled too. (Raw sector
 reads, syscall 602, and the console id, syscall 870, are refused on HEN: ENXIO
 and EPERM on the test console. The app does not call them.) The build checks
 this: `tools/syscalls.py` scans the ELF for every syscall number and fails on
@@ -686,10 +760,11 @@ the `module` struct), `home.c` (the home screen and `state.txt`), `quick.c`
 (the quick check), `help.c` (the Help screen with the QR code), `report.c`
 (the report and the USB copy), one `mod_*.c` per module, `ata.c` and
 `smart.c` (the drive access and the decoders), `trend.c` (the lines of
-`trend.txt` and the wear trend), the pure C of three modules with their host
+`trend.txt` and the wear trend), the pure C of four modules with their host
 tests: `heat.c` (the families, the paste estimate, the halving of a curve),
-`ping.c` (the echo packet, the ping statistics, the network verdict) and
-`tone.c` (the beeps and the sweep), `spu_run.c` (the SPU
+`ping.c` (the echo packet, the ping statistics, the network verdict),
+`tone.c` (the beeps and the sweep) and `ntp.c` (the NTP packets, the offset
+and the drift, the lines of `clock.txt`, the clock verdict), `spu_run.c` (the SPU
 driver: the journaled group of six SPU threads of the SPU kit), `boot.c`
 (the marks of `boot.txt`), the vendor table, the compatibility text and the
 QR encoder.
@@ -736,8 +811,8 @@ skips the stamp check, for a build against a working clone installed by hand).
 Then `build.sh`:
 1. runs the host unit test (`test/test_smart.c`: the decoders, the vendor table,
    the summary, the delta, the trend lines and the wear trend, the issue link,
-   a QR encode, the paste estimate, the ping statistics and the tones) on the
-   Mac, built with `-Werror`;
+   a QR encode, the paste estimate, the ping statistics, the tones and the
+   NTP client) on the Mac, built with `-Werror`;
 2. runs `python3 -I test/test_speed.py`: the speed test's file handling
    (`file_speed_test` of `source/ata.c`) against the host's file calls, also
    under AddressSanitizer and UndefinedBehaviorSanitizer;
@@ -784,7 +859,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push: the host test of
 the decoder, the speed test's file handling (`test/test_speed.py`), a compile
 and `--help` smoke of the Python scripts with the `syscalls.py` self-test, a
 check that `APP_VER` and `VERSION` in `sfo.xml` match `source/version.h`
-(2.2.1 is 02.21), and a pkg build on Linux with the same
+(2.3.0 is 02.30), and a pkg build on Linux with the same
 `sdk_setup.sh` (the pkg is a workflow artifact) followed by the syscall audit of
 its ELF. The signed EBOOT is verified in CI only when the repository secret
 `PS3DEV_KEYS_TOML` holds the key file. A `v*` tag

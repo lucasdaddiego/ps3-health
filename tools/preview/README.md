@@ -64,6 +64,16 @@ which replace the library's weak offline ones. The preview's clock moves by
 frames (1/60 s), so a ping takes whole frames: 16.7 ms, 33.3 ms. The layouts
 are what the scenarios check, not the times.
 
+The Clock module's time server and the Display module's TV page are here
+too: `netSocket` gives a UDP socket when `PV_NTP` is set, `netSendTo` keeps
+the 48-byte request, `netPoll` and `netRecvFrom` answer after `PV_NTP` frames
+with a stratum 2 reply whose receive and transmit times are the preview's
+clock plus `PV_NTP_OFF_MS` (the preview's wall clock moves by whole seconds,
+so an offset comes out short by the frames in flight). `stub/pv_health.h`
+declares `videoDeviceInfo` and `videoGetDeviceInfo` as PSL1GHT has them
+(the library's `sysutil/video.h` has the video state alone), and `pv_app.c`
+answers with an HDMI TV, or the rc of `PV_TV_RC`.
+
 The library's stubs have `sysModuleLoad` and no `sysModuleUnload`, which
 `net_end` and `audio_end` call: `stub/pv_health.h` declares it and `build.zsh` force-includes
 it (`-include`; a `stub/sysmodule/sysmodule.h` here would come after the
@@ -113,3 +123,6 @@ adds:
 | `PV_PING=n[,k]` | the router answers each ping after n frames, every kth lost; `none`: no answer. Unset: no socket, offline |
 | `PV_ICMP=refuse` | the raw socket is refused: the ping times TCP connects |
 | `PV_DNS_MS=n` | a lookup of example.com (the Network module's name) answers after n ms; any other name, or unset: it fails |
+| `PV_NTP=n` | the time server answers the Clock module's packet after n frames; `none`: no answer (the module's timeout); `kod`: a kiss-o'-death (RATE). Unset: no UDP socket. The server must be an address in `ntp.txt` (the resolver gives no list on the host) |
+| `PV_NTP_OFF_MS=n` | the time server's clock minus the console's, in ms (default 0) |
+| `PV_TV_RC=hex` | the TV data read (`videoGetDeviceInfo`) is refused with that rc; unset: an HDMI TV at 1080p, full-range RGB, Rec. 709 primaries, gamma 2.20, one HDCP key, eight modes |

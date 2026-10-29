@@ -13,10 +13,11 @@ mkdir -p $OUT
 J_DONE=$'done error_log rc=0x00000000 ok=1\ndone gpl_devstat rc=0x00000000 ok=1\ndone gpl_phy rc=0x00000000 ok=1\ndone fan_policy rc=0x00000000 ok=1\ndone spu_import rc=0x00000000 ok=1\n'
 J_SPU=$'done spu_import rc=0x00000000 ok=1\n'   # the SPU prompt answered: the Cooling scenarios before 2.1.0 ask only for the fan
 J_FAN=$'done fan_policy rc=0x00000000 ok=1\n'    # the fan prompt answered: the SPU prompt comes at the first load test
-MEM='4:DOWN 6:LEFT 10:CROSS'           # home to the Memory module (row 2, the last tile)
+MEM='4:DOWN 6:RIGHT 8:RIGHT 10:CROSS'  # home to the Memory module (row 2, the third tile)
 COOL='4:RIGHT 6:CROSS'                  # home to the Cooling module
-AUDIO='4:DOWN 8:CROSS'                  # home to the Audio module
-NETW='4:DOWN 6:RIGHT 10:CROSS'          # home to the Network module
+CLOCK='4:DOWN 6:RIGHT 8:RIGHT 10:RIGHT 12:CROSS'   # home to the Clock module (row 2, the fourth tile)
+AUDIO='4:LEFT 8:CROSS'                  # home to the Audio module (row 1, the last tile)
+NETW='4:DOWN 10:CROSS'                  # home to the Network module (row 2, the first tile)
 SBX=$P/build/sbx
 DEF_SAFE='67 38 1853 1042'
 # trend.txt of the test SSD: readings kept by hand, in local time (the preview's clock adds 2026-10-08 09:00)
@@ -33,6 +34,8 @@ scn() {   # name script [VAR=value ...]; SAFE, STATE, JOURNAL, TREND, DEMO, FAMI
     [[ -n $STATE ]] && print -rn -- "$STATE" > $sbx/dev_hdd0/tmp/ps3_health/state.txt
     [[ -n $JOURNAL ]] && print -rn -- "$JOURNAL" > $sbx/dev_hdd0/tmp/ps3_health/journal.txt
     [[ -n $TREND ]] && print -rn -- "$TREND" > $sbx/dev_hdd0/tmp/ps3_health/trend.txt
+    [[ -n $NTP ]] && print -r -- "$NTP" > $sbx/dev_hdd0/tmp/ps3_health/ntp.txt
+    [[ -n $CLOCKTXT ]] && print -rn -- "$CLOCKTXT" > $sbx/dev_hdd0/tmp/ps3_health/clock.txt
     [[ -n ${FAMILY-superslim} ]] && print -r -- "${FAMILY-superslim}" > $sbx/dev_hdd0/tmp/ps3_health/family.txt   # FAMILY= : Cooling asks
     [[ -n $TREND_RO ]] && chmod 200 $sbx/dev_hdd0/tmp/ps3_health/trend.txt
     [[ -n $NOFS ]] && chmod 555 $sbx/dev_hdd0/tmp/ps3_health
@@ -61,29 +64,29 @@ cool|all)
 pad|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn pad "4:RIGHT 6:RIGHT 8:CROSS 20-30:L2+UP+TRIANGLE+START 25:SNAP=pad_live 40-42:SELECT 41:CROSS 100:SNAP=pad_rest 300-302:SELECT 301:TRIANGLE 310-900:SPIN 600:SNAP=pad_circle 1000:SNAP=pad_after 1001:EXIT" PV_STICKS=3,-2,0,1 ;|
 display|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn display "4:LEFT 6:CROSS 14:SNAP=display_main 16:CROSS 24:SNAP=calib 26:CIRCLE 30:TRIANGLE 36:SNAP=pat_white 38:RIGHT 40:RIGHT 42:RIGHT 44:RIGHT 46:RIGHT 50:SNAP=pat_ramp 52:RIGHT 56:SNAP=pat_grid 58:RIGHT 62:SNAP=pat_stripes 64:RIGHT 68:SNAP=pat_lag 69:EXIT" ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn display "4:LEFT 6:LEFT 8:CROSS 16:SNAP=display_main 18:CROSS 26:SNAP=calib 28:CIRCLE 32:TRIANGLE 38:SNAP=pat_white 40:RIGHT 42:RIGHT 44:RIGHT 46:RIGHT 48:RIGHT 52:SNAP=pat_ramp 54:RIGHT 58:SNAP=pat_grid 60:RIGHT 64:SNAP=pat_stripes 66:RIGHT 70:SNAP=pat_lag 71:EXIT" ;|
 mem|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn mem "4:DOWN 6:LEFT 10:CROSS 18:SNAP=mem_main 20:CROSS 40:SNAP=mem_job 2000:SNAP=mem_done 2001:EXIT" ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn mem "$MEM 18:SNAP=mem_main 20:CROSS 40:SNAP=mem_job 2000:SNAP=mem_done 2001:EXIT" ;|
 memrsx|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn memrsx "4:DOWN 6:LEFT 10:CROSS 20:TRIANGLE 1000:SNAP=mem_rsx 1002:CIRCLE 1010:SNAP=home_memrsx 1011:EXIT"
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn memrsx "$MEM 20:TRIANGLE 1000:SNAP=mem_rsx 1002:CIRCLE 1010:SNAP=home_memrsx 1011:EXIT"
     grep -h "RSX memory" $P/build/sbx/memrsx/dev_hdd0/tmp/ps3_health/report-*.txt ;|
 net|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn net "4:DOWN 5:RIGHT 7:RIGHT 9:CROSS 17:SNAP=net_main 19:CROSS 402:SNAP=net_usb 404:TRIANGLE 502:SNAP=net_after 503:EXIT" PV_DNS_MS=23 ;|
-home|all)   # eight tiles, at the default visible area and at the smallest (1600 x 900)
-    HOME8=$'drive|1|2026-10-08|Health OK, 934 h|Dahua V800 2.5 inch SATA 1TB SSD\ncooling|2|2026-10-08|Cell 52>74, RSX 55>77 C|fan 33>45%, 2:00 load, 6 SPUs, check paste\npad|1|2026-10-08|Drift L 0.8%, R 1.2%|Circle L 96%, R 94%\ndisplay|1|2026-10-08|1920x1080p 16:9|Visible area 1786 x 1004\naudio|2|2026-10-08|Right not heard|walk 7 of 8 heard, sweep heard\nnetwork|1|2026-10-08|Wired, 1000 Mbit/s full|router 0.6 ms, no loss, DNS 23 ms\ntransfer|1|2026-10-08|USB 18/22 MB/s|net 94, LAN 812 Mbit/s\nmemory|3|2026-10-08|XDR 200 MB: 2 errors|RSX 196 MB: 0 errors, SPU ok\n'
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn net "4:DOWN 6:RIGHT 9:CROSS 17:SNAP=net_main 19:CROSS 402:SNAP=net_usb 404:TRIANGLE 502:SNAP=net_after 503:EXIT" PV_DNS_MS=23 ;|
+home|all)   # ten tiles, at the default visible area and at the smallest (1600 x 900)
+    HOME8=$'drive|1|2026-10-08|Health OK, 934 h|Dahua V800 2.5 inch SATA 1TB SSD\ncooling|2|2026-10-08|Cell 52>74, RSX 55>77 C|fan 33>45%, 2:00 load, 6 SPUs, check paste\npad|1|2026-10-08|Drift L 0.8%, R 1.2%|Circle L 96%, R 94%\ndisplay|1|2026-10-08|1920x1080p 16:9|Visible area 1786 x 1004\naudio|2|2026-10-08|Right not heard|walk 7 of 8 heard, sweep heard\nnetwork|1|2026-10-08|Wired, 1000 Mbit/s full|router 0.6 ms, no loss, DNS 23 ms\ntransfer|1|2026-10-08|USB 18/22 MB/s|net 94, LAN 812 Mbit/s\nmemory|3|2026-10-08|XDR 200 MB: 2 errors|RSX 196 MB: 0 errors, SPU ok\nclock|1|2026-10-08|+0.31 s vs pool.ntp.org|Drift -0.14 s/day since 2026-10-05\nquick|2|2026-10-08|Check: Cooling|5 of 5 steps ran\n'
     SAFE=$DEF_SAFE JOURNAL= STATE=$HOME8 scn home "3:SNAP=home_filled 4:RIGHT 6:SNAP=home_sel 8:DOWN 10:SNAP=home_sel_row2 12:LEFT 14:LEFT 16:SNAP=home_sel_wrap 17:EXIT"
     SAFE='160 90 1760 990' JOURNAL= STATE=$HOME8 scn home_min "3:SNAP=home_min_filled 4:DOWN 6:LEFT 8:SNAP=home_min_sel 9:EXIT" ;|
 p720|all)
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn p720 "3:SNAP=home_720 4:CROSS 12:CROSS 120:SNAP=drive_720 121:EXIT" PV_RES=720 ;|
 memstop|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= scn memstop "4:DOWN 6:LEFT 10:CROSS 20:CROSS 40:CIRCLE 80:SNAP=mem_stopped 82:CIRCLE 90:SNAP=home_memstop 91:EXIT" ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL= scn memstop "$MEM 20:CROSS 40:CIRCLE 80:SNAP=mem_stopped 82:CIRCLE 90:SNAP=home_memstop 91:EXIT" ;|
 coolstop|all)
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_SPU scn coolstop "4:RIGHT 6:CROSS 16:CROSS 62:CROSS 300:CIRCLE 320:SNAP=cool_stopped 322:CIRCLE 330:SNAP=home_coolstop 331:EXIT" PV_RISE=1 ;|
 demohome|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= DEMO=1 scn demohome "4:CROSS 12:TRIANGLE 80:CIRCLE 90:CROSS 98:TRIANGLE 160:CIRCLE 170:SNAP=home_after_demo 171:EXIT"
     ls $P/build/sbx/demohome/dev_hdd0/tmp/ps3_health | grep report ;|
 nofs|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL= NOFS=1 scn nofs "3:SNAP=nofs_home 4:SQUARE 6:SQUARE 8:SNAP=nofs_square 10:SELECT 10:SNAP=nofs_select 14:SNAP=nofs_usb 16:DOWN 17:RIGHT 19:RIGHT 21:CROSS 21:SNAP=nofs_open 29:CROSS 62:SNAP=nofs_net 63:EXIT" ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL= NOFS=1 scn nofs "3:SNAP=nofs_home 4:SQUARE 6:SQUARE 8:SNAP=nofs_square 10:SELECT 10:SNAP=nofs_select 14:SNAP=nofs_usb 16:DOWN 18:RIGHT 21:CROSS 21:SNAP=nofs_open 29:CROSS 62:SNAP=nofs_net 63:EXIT" ;|
 cool383|all)
     SAFE=$DEF_SAFE STATE= JOURNAL= scn cool383 "4:RIGHT 6:CROSS 16:CROSS 60:SNAP=cool_383 62:CIRCLE 70:EXIT" PV_383_RC=80010003
     grep -nE "cooling|383" $P/build/sbx/cool383/dev_hdd0/tmp/ps3_health/report-*.txt ;|
@@ -105,11 +108,11 @@ helpkept|all)
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn helpkept "4:CROSS 12:CROSS 120:CIRCLE 130:EXIT"
     again helpkept "3:TRIANGLE 14:SNAP=help_kept 15:EXIT" ;|
 net_frozen|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL=$'start net_start\n' scn net_frozen "4:DOWN 5:RIGHT 7:RIGHT 9:CROSS 9:SNAP=net_frozen 11:TRIANGLE 42:SQUARE 82:SNAP=net_frozen_tests 83:EXIT"
+    SAFE=$DEF_SAFE STATE= JOURNAL=$'start net_start\n' scn net_frozen "4:DOWN 6:RIGHT 9:CROSS 9:SNAP=net_frozen 11:TRIANGLE 42:SQUARE 82:SNAP=net_frozen_tests 83:EXIT"
     grep -h "froze" $P/build/sbx/net_frozen/dev_hdd0/tmp/ps3_health/report-*.txt
     cat $P/build/sbx/net_frozen/dev_hdd0/tmp/ps3_health/journal.txt ;|
 copy_frozen|all)
-    SAFE=$DEF_SAFE STATE= JOURNAL=$'start usb_copy\n' scn copy_frozen "3:SELECT 3:SNAP=copy_frozen_select 20:SNAP=copy_frozen 22:SQUARE 24:SQUARE 26:DOWN 27:RIGHT 29:RIGHT 31:CROSS 62:CIRCLE 72:SELECT 102:SNAP=copy_cleared 103:EXIT"
+    SAFE=$DEF_SAFE STATE= JOURNAL=$'start usb_copy\n' scn copy_frozen "3:SELECT 3:SNAP=copy_frozen_select 20:SNAP=copy_frozen 22:SQUARE 24:SQUARE 26:DOWN 28:RIGHT 31:CROSS 62:CIRCLE 72:SELECT 102:SNAP=copy_cleared 103:EXIT"
     cat $P/build/sbx/copy_frozen/dev_hdd0/tmp/ps3_health/journal.txt
     ls $P/build/sbx/copy_frozen/dev_usb000/ps3_health
     cat $P/build/sbx/copy_frozen/dev_usb000/ps3_health/journal.txt
@@ -195,7 +198,7 @@ cool_spu_fail|all)   # the group's start fails: the load test runs without the S
     grep -h "^SPU leg" $SBX/cool_spu_fail/dev_hdd0/tmp/ps3_health/report-*.txt | tail -1
     sed -n '/spu_import/,$s/^/  /p' $SBX/cool_spu_fail/dev_hdd0/tmp/ps3_health/journal.txt ;|
 cool_frozen|all)   # cool_run froze before: no SPU call and no job screen, the load test without them; Memory's SPU test still runs
-    SAFE=$DEF_SAFE STATE= JOURNAL="${J_DONE}froze cool_run"$'\n' scn cool_frozen "$COOL 50:CROSS 600:SNAP=cool_frozen_load 602:CIRCLE 620:SNAP=cool_frozen 622:CIRCLE 630:DOWN 632:RIGHT 634:RIGHT 636:CROSS 652:SQUARE 1602:SNAP=cool_frozen_mem 1604:CIRCLE 1612:EXIT" PV_RISE=1
+    SAFE=$DEF_SAFE STATE= JOURNAL="${J_DONE}froze cool_run"$'\n' scn cool_frozen "$COOL 50:CROSS 600:SNAP=cool_frozen_load 602:CIRCLE 620:SNAP=cool_frozen 622:CIRCLE 630:DOWN 632:RIGHT 636:CROSS 652:SQUARE 1602:SNAP=cool_frozen_mem 1604:CIRCLE 1612:EXIT" PV_RISE=1
     grep -h -E "^SPU (leg|local store)" $SBX/cool_frozen/dev_hdd0/tmp/ps3_health/report-*.txt | tail -2
     sed -n '/froze/,$s/^/  /p' $SBX/cool_frozen/dev_hdd0/tmp/ps3_health/journal.txt ;|
 cool_skip|all)   # CIRCLE at the SPU prompt: the load test runs without the SPUs, and TRIANGLE asks nothing
@@ -203,7 +206,7 @@ cool_skip|all)   # CIRCLE at the SPU prompt: the load test runs without the SPUs
     grep -h "^SPU leg" $SBX/cool_skip/dev_hdd0/tmp/ps3_health/report-*.txt | tail -1
     sed 's/^/  /' $SBX/cool_skip/dev_hdd0/tmp/ps3_health/journal.txt ;|
 cool_stuck|all)   # the terminate fails while the SPUs count: they stay up (red line); after SQUARE twice Memory's SQUARE asks nothing and runs nothing
-    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_stuck "$COOL 50:CROSS 300:CIRCLE 340:SNAP=cool_stuck 342:CIRCLE 350:SQUARE 352:SQUARE 360:DOWN 362:RIGHT 364:RIGHT 366:CROSS 382:SQUARE 402:SNAP=cool_stuck_mem 404:SQUARE 422:SNAP=cool_stuck_mem_again 424:CIRCLE 432:EXIT" PV_RISE=1 PV_SPU_FAIL=177
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn cool_stuck "$COOL 50:CROSS 300:CIRCLE 340:SNAP=cool_stuck 342:CIRCLE 350:SQUARE 352:SQUARE 360:DOWN 362:RIGHT 366:CROSS 382:SQUARE 402:SNAP=cool_stuck_mem 404:SQUARE 422:SNAP=cool_stuck_mem_again 424:CIRCLE 432:EXIT" PV_RISE=1 PV_SPU_FAIL=177
     grep -h -E "^SPU (leg|local store)" $SBX/cool_stuck/dev_hdd0/tmp/ps3_health/report-*.txt | sort -u
     sed 's/^/  /' $SBX/cool_stuck/dev_hdd0/tmp/ps3_health/journal.txt ;|
 cool_stuck_again|all)   # CROSS again while those SPUs still count: no load on top (the cards dimmed), the red line, the curve and "SPUs stuck" stay
@@ -244,9 +247,10 @@ network_tcp|all)   # the raw socket refused: TCP connects to port 80, said on sc
 network_down|all)   # no link, no address
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn network_down "$NETW 22:CROSS 60:SNAP=network_down 62:CIRCLE 70:SNAP=home_network_down 71:EXIT" PV_NET=down PV_PING=1 ;|
 quick|all)   # R1 on the home screen: the intro, the steps running, the verdict; the tiles after
-    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn quick "4:R1 12:SNAP=quick_intro 14:CROSS 40:SNAP=quick_run 2400:SNAP=quick_result 2402:CIRCLE 2410:SNAP=home_quick 2411:EXIT" PV_PING=1 PV_RISE=1 PV_MAXFRAMES=5000
-    grep -h -E "^(--- |verdict|ping|XDR|user memory|RSX memory|SPU local)" $SBX/quick/dev_hdd0/tmp/ps3_health/report-*.txt | tail -14
-    SAFE='160 90 1760 990' STATE= JOURNAL=$J_DONE scn quick_min "4:R1 12:SNAP=quick_min_intro 14:CROSS 2400:SNAP=quick_min_result 2401:EXIT" PV_PING=1 PV_MAXFRAMES=5000 ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn quick "4:R1 12:SNAP=quick_intro 14:CROSS 40:SNAP=quick_run 2400:SNAP=quick_result 2402:CIRCLE 2410:SNAP=home_quick 2411:EXIT" PV_PING=1 PV_NTP=1 PV_NTP_OFF_MS=310 PV_RISE=1 PV_MAXFRAMES=5000
+    grep -h -E "^(--- |verdict|ping|XDR|user memory|RSX memory|SPU local|time server)" $SBX/quick/dev_hdd0/tmp/ps3_health/report-*.txt | tail -17
+    cut -d'|' -f1,2,4,5 $SBX/quick/dev_hdd0/tmp/ps3_health/state.txt
+    SAFE='160 90 1760 990' STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn quick_min "4:R1 12:SNAP=quick_min_intro 14:CROSS 2400:SNAP=quick_min_result 2401:EXIT" PV_PING=1 PV_NTP=1 PV_MAXFRAMES=5000 ;|
 mem_order|all)   # the XDR test, then the quick check (2.2.0 rc3: its SPU group got ENOMEM): every kernel page comes back
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn mem_order "$MEM 20:CROSS 2000:CIRCLE 2010:R1 2020:CROSS 4400:SNAP=mem_order 4401:EXIT" PV_PING=1 PV_KMEM_STAT=1 PV_MAXFRAMES=6000
     grep -h -E "^(user memory|RSX memory|SPU local)" $SBX/mem_order/dev_hdd0/tmp/ps3_health/report-*.txt | tail -4 ;|
@@ -254,7 +258,7 @@ mem_malloc|all)   # the kernel refuses its pages: the XDR test takes malloc's bl
     SAFE=$DEF_SAFE STATE= JOURNAL= scn mem_malloc "$MEM 20:CROSS 2000:SNAP=mem_malloc 2002:CIRCLE 2010:EXIT" PV_KMEM_MB=0 PV_KMEM_STAT=1
     grep -h "^user memory" $SBX/mem_malloc/dev_hdd0/tmp/ps3_health/report-*.txt ;|
 quick_stop|all)   # CIRCLE during the memory step: the network step is not run
-    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn quick_stop "4:R1 14:CROSS 30:CIRCLE 400:SNAP=quick_stop 401:EXIT" PV_PING=1 PV_MAXFRAMES=5000 ;|
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn quick_stop "4:R1 14:CROSS 30:CIRCLE 400:SNAP=quick_stop 401:EXIT" PV_PING=1 PV_NTP=1 PV_MAXFRAMES=5000 ;|
 drive_life|all)   # the SSD at 91 % after 100, 97, 94 a month apart: about 30 months to 0 %; and with two days of reads: no estimate yet
     LD=$P/build/drive_life
     rm -rf $LD; mkdir -p $LD; cp $DRIVE/*.bin $LD/ 2>/dev/null
@@ -313,12 +317,44 @@ network_silent|all)   # the router answers nothing (PV_PING=none): three ICMP ec
 net_info_frozen|all)   # the netctl reads froze before: not made again, no connection data, and CROSS runs no test
     SAFE=$DEF_SAFE STATE= JOURNAL=$'start net_info\n' scn net_info_frozen "$NETW 20:SNAP=net_info_frozen 22:CROSS 40:SNAP=net_info_frozen_cross 42:CIRCLE 50:EXIT" PV_PING=1
     grep -h "^connection" $SBX/net_info_frozen/dev_hdd0/tmp/ps3_health/report-*.txt ;|
-quick_nonet|all)   # the network start froze before: the quick check's network step is not run, no red, its tile stays
+quick_nonet|all)   # the network start froze before: the quick check's network and clock steps are not run, no red, their tiles stay
     SAFE=$DEF_SAFE STATE= JOURNAL="${J_DONE}froze net_start"$'\n' scn quick_nonet "4:R1 14:CROSS 2400:SNAP=quick_nonet 2402:CIRCLE 2410:SNAP=home_quick_nonet 2411:EXIT" PV_MAXFRAMES=5000
     cut -d'|' -f1,2,4,5 $SBX/quick_nonet/dev_hdd0/tmp/ps3_health/state.txt ;|
 audio_open|all)   # TRIANGLE after the left answer: the right side not answered, a yellow result and tile
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn audio_open "$AUDIO 18:CROSS 40:CROSS 50:TRIANGLE 60:SNAP=audio_open 62:CIRCLE 70:SNAP=home_audio_open 71:EXIT"
     grep -h "^left" $SBX/audio_open/dev_hdd0/tmp/ps3_health/report-*.txt | tail -1 ;|
+clock|all)   # the Clock module: the server (an address in ntp.txt: the host resolves no name) answers in one frame, 310 ms ahead of the console; CROSS asks again
+    CLOCKSEED=$'1790596800 -500 31 192.168.0.1\n1791201600 -120 23 192.168.0.1\n'   # 10 and 3 days before the preview's clock (2026-10-08 12:00 UTC)
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn clock "$CLOCK 100:SNAP=clock_main 102:CROSS 190:SNAP=clock_again 192:CIRCLE 200:SNAP=home_clock 201:EXIT" PV_NTP=1 PV_NTP_OFF_MS=310
+    grep -h -A4 "^--- clock" $SBX/clock/dev_hdd0/tmp/ps3_health/report-*.txt | tail -5
+    cat $SBX/clock/dev_hdd0/tmp/ps3_health/clock.txt
+    grep -h "clock_ntp" $SBX/clock/dev_hdd0/tmp/ps3_health/journal.txt | sed 's/^/  /'
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 CLOCKTXT=$CLOCKSEED scn clock_drift "$CLOCK 100:SNAP=clock_drift 102:CIRCLE 110:EXIT" PV_NTP=1 PV_NTP_OFF_MS=310
+    grep -h -E "^(drift|verdict)" $SBX/clock_drift/dev_hdd0/tmp/ps3_health/report-*.txt
+    SAFE='160 90 1760 990' STATE= JOURNAL=$J_DONE NTP=192.168.0.1 CLOCKTXT=$CLOCKSEED scn clock_min "$CLOCK 100:SNAP=clock_min 101:EXIT" PV_NTP=1 PV_NTP_OFF_MS=-1250
+    # the clock was set between the runs: the last line an hour before, 35.2 s off; now 0.3 s: no rate, the step
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 CLOCKTXT=$'1791457200 -35200 16 192.168.0.1\n' scn clock_set "$CLOCK 100:SNAP=clock_set 102:CIRCLE 110:SNAP=home_clock_set 111:EXIT" PV_NTP=1 PV_NTP_OFF_MS=310
+    grep -h -E "^(clock set|drift)" $SBX/clock_set/dev_hdd0/tmp/ps3_health/report-*.txt
+    cut -d'|' -f1,2,4,5 $SBX/clock_set/dev_hdd0/tmp/ps3_health/state.txt ;|
+clock_none|all)   # no answer in 1.5 s per sample: a yellow verdict; then the server refuses (kiss-o'-death); then 2 min off: red
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn clock_none "$CLOCK 500:SNAP=clock_none 502:CIRCLE 510:SNAP=home_clock_none 511:EXIT" PV_NTP=none
+    grep -h -E "^(time server|verdict)" $SBX/clock_none/dev_hdd0/tmp/ps3_health/report-*.txt
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn clock_kod "$CLOCK 60:SNAP=clock_kod 61:EXIT" PV_NTP=kod
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn clock_off "$CLOCK 100:SNAP=clock_off 102:CIRCLE 110:SNAP=home_clock_off 111:EXIT" PV_NTP=1 PV_NTP_OFF_MS=125000
+    grep -h "^verdict" $SBX/clock_off/dev_hdd0/tmp/ps3_health/report-*.txt ;|
+clock_nonet|all)   # the network start froze before: no exchange, no verdict; the name needs DNS: no answer, the hint about ntp.txt
+    SAFE=$DEF_SAFE STATE= JOURNAL="${J_DONE}froze net_start"$'\n' scn clock_nonet "$CLOCK 20:SNAP=clock_nonet 21:EXIT"
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn clock_dns "$CLOCK 60:SNAP=clock_dns 62:CIRCLE 70:EXIT" PV_NTP=1
+    grep -h "^time server" $SBX/clock_dns/dev_hdd0/tmp/ps3_health/report-*.txt ;|
+tv|all)   # the Display module's TV page (RIGHT): an HDMI TV; then the read refused, and frozen before
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn tv "4:LEFT 6:LEFT 8:CROSS 16:RIGHT 24:SNAP=display_tv 26:LEFT 34:SNAP=display_back 36:CIRCLE 44:EXIT"
+    grep -h "^tv" $SBX/tv/dev_hdd0/tmp/ps3_health/report-*.txt
+    grep -h "display_tv" $SBX/tv/dev_hdd0/tmp/ps3_health/journal.txt | sed 's/^/  /'
+    SAFE='160 90 1760 990' STATE= JOURNAL=$J_DONE scn tv_min "4:LEFT 6:LEFT 8:CROSS 16:RIGHT 24:SNAP=display_tv_min 25:EXIT"
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE scn tv_refused "4:LEFT 6:LEFT 8:CROSS 16:RIGHT 24:SNAP=display_tv_refused 26:CIRCLE 34:EXIT" PV_TV_RC=8002b221
+    grep -h "^tv" $SBX/tv_refused/dev_hdd0/tmp/ps3_health/report-*.txt
+    SAFE=$DEF_SAFE STATE= JOURNAL="${J_DONE}start display_tv"$'\n' scn tv_frozen "4:LEFT 6:LEFT 8:CROSS 16:RIGHT 24:SNAP=display_tv_frozen 26:CIRCLE 34:EXIT"
+    grep -h "^tv" $SBX/tv_frozen/dev_hdd0/tmp/ps3_health/report-*.txt ;|
 esac
 ${PYTHON:-python3} -I - "$OUT" <<'PY'
 import glob, os, sys

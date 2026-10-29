@@ -1,4 +1,4 @@
-/* The app: eight modules behind a home screen, one report, one journal. */
+/* The app: nine modules behind a home screen, one report, one journal. */
 #ifndef APP_H
 #define APP_H
 
@@ -18,11 +18,13 @@ typedef struct {
     void (*report)(void);
 } module;
 
-#define MODULE_COUNT 8
+#define MODULE_COUNT 9
 extern const module modules[MODULE_COUNT];
+#define TILE_QUICK MODULE_COUNT            /* the tenth tile of the home screen: the quick check (key "quick"), not a module */
 
-/* The last result of each module, kept in APP_DIR/state.txt for the home
- * screen: a dot (DOT_*), two lines of at most 44 characters, the date. */
+/* The last result of each module and of the quick check, kept in
+ * APP_DIR/state.txt for the home screen: a dot (DOT_*), two lines of at
+ * most 44 characters, the date. */
 enum { DOT_NONE, DOT_OK, DOT_WARN, DOT_BAD };
 typedef struct {
     int dot;
@@ -67,6 +69,8 @@ void mod_audio_report(void);
 void audio_end(void);              /* leave() and the module's exit: the sound's end, one journaled call; nothing when it never started */
 int mod_cool_open(void);
 void mod_cool_report(void);
+int mod_clock_open(void);
+void mod_clock_report(void);
 
 /* The SPU driver (spu_run.c), the PPU side of ps3gfx's SPU kit: one group of
  * six SPU threads per use, each call journaled. The image names spu_init,
@@ -113,6 +117,8 @@ void mem_quick(void);
 int mem_quick_end(char *line, int n);
 void network_quick(void);
 int network_quick_end(char *line, int n);
+void clock_quick(void);
+int clock_quick_end(char *line, int n);
 
 /* The Cooling module's soak test borrows the Memory module's tests
  * (mod_mem.c): one pattern p over n blocks of 1 MB, written then verified

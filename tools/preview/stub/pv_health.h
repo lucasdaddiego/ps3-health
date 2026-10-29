@@ -13,7 +13,37 @@ s32 sysLv2FsRename(const char *from, const char *to);   /* boot.c: boot.txt to b
  * have no raw socket and no ICMP. */
 #define SOCK_RAW 3
 #define IPPROTO_ICMP 1
+#define IPPROTO_UDP 17                       /* the Clock module's time server */
 #define NET_EPROTONOSUPPORT 43
+
+/* The TV's data as PSL1GHT's sysutil/video.h has it: the library's stub has
+ * the video state alone. pv_app.c answers videoGetDeviceInfo. */
+#include "sysutil/video.h"
+#define VIDEO_STATE_DISABLED 0
+#define VIDEO_STATE_ENABLED 1
+#define VIDEO_STATE_BUSY 3
+#define VIDEO_PORT_NONE 0x00
+#define VIDEO_PORT_HDMI 0x01
+#define VIDEO_PORT_NETWORK 0x41
+#define VIDEO_PORT_COMPOSITE 0x81
+#define VIDEO_PORT_D 0x82
+#define VIDEO_PORT_COMPONENT 0x83
+#define VIDEO_PORT_RGB 0x84
+#define VIDEO_PORT_SCART 0x85
+#define VIDEO_PORT_DSUB 0x86
+typedef struct { u16 redX, redY, greenX, greenY, blueX, blueY, whiteX, whiteY; u32 gamma; } videoColorInfo;
+typedef struct { u8 ksv[32 * 5]; u8 padding[4]; u32 count; } videoKSVList;
+typedef struct {
+    u8 portType, colorSpace;
+    u16 latency;
+    u8 availableModeCount, state, rgbOutputRange;
+    u8 padding[5];
+    videoColorInfo colorInfo;
+    videoDisplayMode availableModes[32];
+    videoKSVList ksvList;
+} videoDeviceInfo;
+s32 videoGetDeviceInfo(u32 out, u32 dev, videoDeviceInfo *info);
+s32 videoGetNumberOfDevice(u32 out);
 
 /* netctl as PSL1GHT's net/netctl.h has it: the library's stub has the
  * address alone. Its include guard is set here, so the library's file adds

@@ -16,7 +16,7 @@ export PATH=$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin
 rev=$(sed -n 's/^PS3GFX_REV=\([0-9a-f]*\).*/\1/p' sdk_setup.sh); stamp=$(cat $PS3DEV/portlibs/ppu/share/ps3gfx/COMMIT 2>/dev/null)
 [[ $PS3GFX_DEV == 1 || $stamp == $rev ]] || { print -u2 "ps3gfx in $PS3DEV is ${stamp:-unstamped}, sdk_setup.sh pins $rev: run ./sdk_setup.sh, or PS3GFX_DEV=1 to build against the installed one"; exit 1 }
 t=$(mktemp -d)
-cc -std=c99 -Wall -Wextra -Werror -o $t/test_smart test/test_smart.c source/smart.c source/vendor.c source/trend.c source/compat.c source/qrcodegen.c source/heat.c source/ping.c source/tone.c -lm
+cc -std=c99 -Wall -Wextra -Werror -o $t/test_smart test/test_smart.c source/smart.c source/vendor.c source/trend.c source/compat.c source/qrcodegen.c source/heat.c source/ping.c source/tone.c source/ntp.c -lm
 $t/test_smart
 rm -r $t
 python3 -I test/test_speed.py

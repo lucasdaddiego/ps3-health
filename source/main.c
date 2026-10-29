@@ -1,6 +1,6 @@
-/* PS3 Health: the hardware of a PS3 checked from a HEN app. Eight modules
+/* PS3 Health: the hardware of a PS3 checked from a HEN app. Nine modules
  * behind a home screen: Drive, Cooling, Controller, Display, Audio, Network,
- * Transfer, Memory. */
+ * Transfer, Memory, Clock. */
 #include <stdlib.h>
 #include "app.h"
 #include <ps3gfx/ui.h>

@@ -2,7 +2,9 @@
  * 409 (PV_DRIVE, PV_ST, PV_RISE, PV_TEMP_OFF, PV_383_RC, PV_383_FAIL_AT), the
  * six SPUs of the SPU kit (PV_SPU_FAIL, PV_SPU_LATE, PV_SPU_STALL,
  * PV_LS_FAULT, PV_HEAT_RATE), the audio port (PV_AUDIO_CH, PV_WAV) and the
- * Network module's world (PV_NET, PV_PING, PV_ICMP, PV_DNS_MS): README.md. */
+ * Network module's world (PV_NET, PV_PING, PV_ICMP, PV_DNS_MS), the Clock
+ * module's time server (PV_NTP, PV_NTP_OFF_MS) and the TV's data (PV_TV_RC):
+ * README.md. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +14,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "lv2/systime.h"
+#include "sys/systime.h"
 #include "ppu-lv2.h"
 #include "sys/spu.h"
 #include "audio/audio.h"
@@ -466,6 +469,9 @@ s32 netCtlGetInfo(s32 code, union net_ctl_info *i)
  * download host) fails, as it does with no PV_DNS_MS (offline). */
 #define FD_RAW 0x701
 #define FD_TCP 0x702
+#define FD_UDP 0x703                         /* the Clock module's socket to the time server */
+static uint8_t ntp_req[48];
+static u64 ntp_sent_at;
 static s32 pv_errno = NET_ENETDOWN;
 static u64 sent_at;
 static int pings;
@@ -487,6 +493,10 @@ static void wait_until(u64 t) { while (sysGetSystemTime() < t) usleep(200); }
 s32 netSocket(s32 d, s32 t, s32 p)
 {
     (void)d; (void)p;
+    if (t == SOCK_DGRAM) {
+        if (!getenv("PV_NTP")) { pv_errno = NET_ENETDOWN; return -1; }
+        return FD_UDP;
+    }
     if (!getenv("PV_PING")) { pv_errno = NET_ENETDOWN; return -1; }
     if (t == SOCK_RAW) {
         if (getenv("PV_ICMP") && !strcmp(getenv("PV_ICMP"), "refuse")) { pv_errno = NET_EPROTONOSUPPORT; return -1; }
@@ -498,6 +508,12 @@ s32 netSocket(s32 d, s32 t, s32 p)
 ssize_t netSendTo(s32 s, const void *b, size_t l, s32 f, const struct sockaddr *a, socklen_t al)
 {
     (void)f; (void)a; (void)al;
+    if (s == FD_UDP) {
+        if (l != sizeof ntp_req) return -1;
+        memcpy(ntp_req, b, l);
+        ntp_sent_at = sysGetSystemTime();
+        return (ssize_t)l;
+    }
     if (s != FD_RAW || l > sizeof last_req) return -1;
     memcpy(last_req, b, l);
     last_len = (int)l;
@@ -508,9 +524,45 @@ ssize_t netSendTo(s32 s, const void *b, size_t l, s32 f, const struct sockaddr *
 
 /* The reply after an IPv4 header, as a BSD raw socket gives it, once the
  * poll said it came. */
+/* The time server: PV_NTP=frames answers the Clock module's packet after
+ * that many frames with the preview's clock plus PV_NTP_OFF_MS (the
+ * server's clock minus the console's, default 0), stratum 2; PV_NTP=none
+ * answers nothing (the module's timeout); PV_NTP=kod answers a
+ * kiss-o'-death (RATE). Unset: no UDP socket. The server must be an address
+ * in ntp.txt: the resolver gives no list on the host (netGetHostByName). */
+static int ntp_frames(void) { return getenv("PV_NTP") ? atoi(getenv("PV_NTP")) : 0; }
+static int ntp_none(void) { return getenv("PV_NTP") && !strcmp(getenv("PV_NTP"), "none"); }
+
+static void ntp_stamp(uint8_t *p, u64 us)
+{
+    u64 sec = us / 1000000 + 2208988800ull, frac = ((us % 1000000) << 32) / 1000000;
+    p[0] = (uint8_t)(sec >> 24); p[1] = (uint8_t)(sec >> 16); p[2] = (uint8_t)(sec >> 8); p[3] = (uint8_t)sec;
+    p[4] = (uint8_t)(frac >> 24); p[5] = (uint8_t)(frac >> 16); p[6] = (uint8_t)(frac >> 8); p[7] = (uint8_t)frac;
+}
+
+static ssize_t ntp_reply(uint8_t *o, size_t l)
+{
+    if (l < 48 || ntp_none()) { pv_errno = NET_EAGAIN; return -1; }
+    wait_until(ntp_sent_at + (u64)ntp_frames() * 16667);
+    u64 sec = 0, nsec = 0;
+    sysGetCurrentTime(&sec, &nsec);
+    u64 now = sec * 1000000 + nsec / 1000 + (u64)((long long)(getenv("PV_NTP_OFF_MS") ? atoll(getenv("PV_NTP_OFF_MS")) : 0) * 1000);
+    memset(o, 0, 48);
+    o[0] = 0x24;                             /* version 4, mode 4 (server) */
+    o[1] = 2;                                /* stratum 2 */
+    o[2] = 6;                                /* poll */
+    o[3] = (uint8_t)-20;                     /* precision 2^-20 s */
+    if (getenv("PV_NTP") && !strcmp(getenv("PV_NTP"), "kod")) { o[1] = 0; memcpy(o + 12, "RATE", 4); }
+    memcpy(o + 24, ntp_req + 40, 8);         /* originate: the request's transmit time */
+    ntp_stamp(o + 32, now);
+    ntp_stamp(o + 40, now);
+    return 48;
+}
+
 ssize_t netRecvFrom(s32 s, void *b, size_t l, s32 f, struct sockaddr *from, socklen_t *fl)
 {
     (void)f; (void)from; (void)fl;
+    if (s == FD_UDP) return ntp_reply(b, l);
     if (s != FD_RAW || l < (size_t)(20 + last_len) || ping_lost()) { pv_errno = NET_EAGAIN; return -1; }
     wait_until(sent_at + (u64)ping_frames() * 16667);
     uint8_t *o = b;
@@ -537,6 +589,12 @@ s32 netConnect(s32 s, const struct sockaddr *a, socklen_t l)
 s32 netPoll(struct pollfd *p, nfds_t n, s32 timeout)
 {
     (void)n;
+    if (p->fd == FD_UDP) {
+        if (ntp_none()) { wait_until(sysGetSystemTime() + (u64)timeout * 1000); return 0; }
+        wait_until(ntp_sent_at + (u64)ntp_frames() * 16667);
+        p->revents = POLLIN;
+        return 1;
+    }
     if (p->fd != FD_TCP && p->fd != FD_RAW) return -1;
     if (ping_lost()) { wait_until(sysGetSystemTime() + (u64)timeout * 1000); return 0; }
     wait_until(sent_at + (u64)ping_frames() * 16667);
@@ -563,4 +621,39 @@ struct net_hostent *netGetHostByName(const char *name)
     if (!getenv("PV_DNS_MS") || strcmp(name, "example.com")) return NULL;
     wait_until(sysGetSystemTime() + (u64)atoi(getenv("PV_DNS_MS")) * 1000);
     return &he;
+}
+
+/* ---- the TV --------------------------------------------------------------- */
+
+/* An HDMI TV at 1080p: full-range RGB, no EDID latency, Rec. 709 primaries
+ * (fractions of 1024), gamma 2.20, one HDCP key, and the modes a 1080p TV
+ * accepts. PV_TV_RC=hex: the read is refused with that rc. */
+s32 videoGetNumberOfDevice(u32 out) { (void)out; return 1; }
+
+s32 videoGetDeviceInfo(u32 out, u32 dev, videoDeviceInfo *info)
+{
+    (void)out; (void)dev;
+    if (getenv("PV_TV_RC")) return (s32)strtoul(getenv("PV_TV_RC"), NULL, 16);
+    static const videoDisplayMode modes[] = {
+        {VIDEO_RESOLUTION_1080, VIDEO_SCANMODE_PROGRESSIVE, 0, VIDEO_ASPECT_16_9, {0, 0}, 0x05},
+        {VIDEO_RESOLUTION_1080, VIDEO_SCANMODE_INTERLACE, 0, VIDEO_ASPECT_16_9, {0, 0}, 0x05},
+        {VIDEO_RESOLUTION_720, VIDEO_SCANMODE_PROGRESSIVE, 0, VIDEO_ASPECT_16_9, {0, 0}, 0x05},
+        {VIDEO_RESOLUTION_480, VIDEO_SCANMODE_PROGRESSIVE, 0, VIDEO_ASPECT_16_9, {0, 0}, 0x05},
+        {VIDEO_RESOLUTION_480, VIDEO_SCANMODE_PROGRESSIVE, 1, VIDEO_ASPECT_16_9, {0, 0}, 0x05},   /* the same mode with another conversion flag: shown once */
+        {VIDEO_RESOLUTION_480, VIDEO_SCANMODE_INTERLACE, 0, VIDEO_ASPECT_4_3, {0, 0}, 0x05},
+        {VIDEO_RESOLUTION_576, VIDEO_SCANMODE_PROGRESSIVE, 0, VIDEO_ASPECT_16_9, {0, 0}, 0x02},
+        {VIDEO_RESOLUTION_576, VIDEO_SCANMODE_INTERLACE, 0, VIDEO_ASPECT_4_3, {0, 0}, 0x02},
+    };
+    memset(info, 0, sizeof *info);
+    info->portType = VIDEO_PORT_HDMI;
+    info->colorSpace = 7;                    /* RGB, YUV and xvYCC, as the test TV */
+
+    info->latency = 0;
+    info->state = VIDEO_STATE_ENABLED;
+    info->rgbOutputRange = 1;
+    info->colorInfo = (videoColorInfo){655, 338, 307, 614, 154, 61, 320, 337, 220};
+    info->availableModeCount = sizeof modes / sizeof modes[0];
+    memcpy(info->availableModes, modes, sizeof modes);
+    info->ksvList.count = 1;
+    return 0;
 }

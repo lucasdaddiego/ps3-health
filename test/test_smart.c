@@ -1,5 +1,5 @@
 /* Mac-side test of the pure C layer (smart.c, vendor.c, trend.c, compat.c,
- * qrcodegen.c, heat.c, ping.c, tone.c) with synthetic sectors laid out as
+ * qrcodegen.c, heat.c, ping.c, tone.c, ntp.c) with synthetic sectors laid out as
  * ACS-3 says. build.sh and CI run it. */
 #include <math.h>
 #include <stdio.h>
@@ -14,6 +14,7 @@
 #include "../source/heat.h"
 #include "../source/ping.h"
 #include "../source/tone.h"
+#include "../source/ntp.h"
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -676,6 +677,73 @@ int main(void)
         step = fabsf(buf[0] - before);
         for (int i = 1; i < TONE_RATE / 20; i++) if (fabsf(buf[i * 2] - buf[(i - 1) * 2]) > step) step = fabsf(buf[i * 2] - buf[(i - 1) * 2]);
         CHECK(step < 0.0075 && tone_done(&tn) && buf[(TONE_RATE / 25) * 2] == 0 && buf[(TONE_RATE / 20 - 1) * 2] == 0);
+    }
+
+    {                                        /* ntp.c: the packets, the numbers, the lines, the verdict */
+        uint8_t req[48], rep[48];
+        ntp_reply r;
+        ntp_sample sm;
+        ntp_line ln;
+        char t[48];
+        ntp_us t1 = 1791460800000000ll + 250000;   /* 2026-10-08 12:00:00.25 UTC */
+        CHECK(ntp_request(req, 40, t1) == -1);
+        CHECK(ntp_request(req, sizeof req, t1) == 0 && req[0] == 0x23 && req[1] == 0);
+        CHECK(req[40] == 0xee && req[41] == 0x72 && req[42] == 0x04 && req[43] == 0x40);   /* 1791460800 + 2208988800 = 0xEE720440 */
+        CHECK(req[44] == 0x40 && req[45] == 0 && req[46] == 0 && req[47] == 0);          /* 0.25 as a 32-bit fraction */
+        memset(rep, 0, sizeof rep);
+        rep[0] = 0x24;                       /* version 4, mode 4 */
+        rep[1] = 2;                          /* stratum 2 */
+        rep[3] = (uint8_t)-20;               /* precision 2^-20 */
+        memcpy(rep + 24, req + 40, 8);       /* originate = our transmit */
+        memcpy(rep + 32, req + 40, 8);       /* receive 1791460801.25: one second and the same fraction */
+        rep[35] = 0x41;
+        memcpy(rep + 40, rep + 32, 8);       /* transmit 1791460801.50 */
+        rep[44] = 0x80;
+        CHECK(ntp_parse(rep, 47, req, &r) == -1);
+        CHECK(ntp_parse(rep, 48, req, &r) == 0 && r.stratum == 2 && r.precision == -20 && r.mode == 4 && r.version == 4);
+        CHECK(r.t2 == 1791460801250000ll && r.t3 == 1791460801500000ll);
+        ntp_sample_calc(t1, r.t2, r.t3, t1 + 400000, &sm);   /* t4 = t1 + 400 ms: ((1.0) + (1.25 - 0.4)) / 2, (0.4) - (0.25) */
+        CHECK(sm.offset_us == 925000 && sm.rtt_us == 150000);
+        ntp_sample_calc(t1, r.t2, r.t3, t1 + 100000, &sm);   /* a reply before the request's end: no negative round trip */
+        CHECK(sm.rtt_us == 0);
+        rep[1] = 0; memcpy(rep + 12, "RATE", 4);
+        CHECK(ntp_parse(rep, 48, req, &r) == -2 && !strcmp(r.ref, "RATE"));
+        rep[1] = 2; rep[0] = 0x23;           /* mode 3: not a reply */
+        CHECK(ntp_parse(rep, 48, req, &r) == -1);
+        rep[0] = 0x24; rep[27] ^= 1;         /* another originate time */
+        CHECK(ntp_parse(rep, 48, req, &r) == -1);
+        rep[27] ^= 1; rep[1] = 1; memcpy(rep + 12, "GPS\0", 4);
+        CHECK(ntp_parse(rep, 48, req, &r) == 0 && !strcmp(r.ref, "GPS"));
+        ntp_sample list[3] = {{100, 40000}, {-50, 12000}, {0, 30000}};
+        CHECK(ntp_best(list, 3) == 1 && ntp_best(list, 0) == -1);
+        double ppm, msd;
+        CHECK(ntp_drift(0, 0, 500000000, 0, &ppm, &msd) == 0);              /* under 10 min */
+        CHECK(ntp_drift(0, 0, 86400000000ll, -864000, &ppm, &msd) == 1);    /* the offset fell 0.864 s in a day: the console runs fast */
+        CHECK(ppm > 9.99 && ppm < 10.01 && msd > 863.9 && msd < 864.1);
+        CHECK(ntp_drift(0, 1000000, 86400000000ll, 1000000, &ppm, &msd) == 1 && ppm == 0 && msd == 0);
+        CHECK(ntp_drift(86400000000ll, 0, 0, 0, &ppm, &msd) == 0);          /* not forward */
+        ln.console_s = 1791460801; ln.offset_ms = -120; ln.rtt_ms = 23; snprintf(ln.server, sizeof ln.server, "pool.ntp.org");
+        CHECK(ntp_line_format(t, sizeof t, &ln) == 32 && !strcmp(t, "1791460801 -120 23 pool.ntp.org\n"));
+        CHECK(ntp_line_format(t, 10, &ln) == -1);
+        CHECK(ntp_line_parse("1791460801 -120 23 pool.ntp.org\n", &ln) == 0 && ln.console_s == 1791460801 && ln.offset_ms == -120 && ln.rtt_ms == 23 && !strcmp(ln.server, "pool.ntp.org"));
+        CHECK(ntp_line_parse("1791460801 -120 23 192.168.0.1", &ln) == 0 && !strcmp(ln.server, "192.168.0.1"));
+        CHECK(ntp_line_parse("drive Dahua", &ln) == -1 && ntp_line_parse("", &ln) == -1 && ntp_line_parse("1 2 3", &ln) == -1);
+        CHECK(ntp_line_parse("1791460801 -120 23 pool.ntp.org extra", &ln) == -1 && ntp_line_parse("-5 0 0 x", &ln) == -1);
+        CHECK(ntp_judge(1, 300000, 1791460801, t, sizeof t) == 0 && strstr(t, "within 0.30 s"));
+        CHECK(ntp_judge(1, -2500000, 1791460801, t, sizeof t) == 1 && strstr(t, "2.50 s off"));
+        CHECK(ntp_judge(1, 125000000, 1791460801, t, sizeof t) == 2 && strstr(t, "2 min 5 s off") && strstr(t, "set the date"));
+        CHECK(ntp_judge(0, 0, 1791460801, t, sizeof t) == 1 && strstr(t, "no answer"));
+        CHECK(ntp_judge(1, 0, 946684800, t, sizeof t) == 2 && strstr(t, "reset"));   /* 2000-01-01 */
+        ntp_offset_text(-312000, t, sizeof t); CHECK(!strcmp(t, "-0.31 s"));
+        ntp_offset_text(3723000000ll, t, sizeof t); CHECK(!strcmp(t, "+1 h 2 min"));
+        ntp_offset_text(90000000, t, sizeof t); CHECK(!strcmp(t, "+1 min 30 s"));
+        ntp_offset_text(-3ll * 86400000000ll, t, sizeof t); CHECK(!strcmp(t, "-3 days"));
+        ntp_span_text(45, t, sizeof t); CHECK(!strcmp(t, "45 s"));
+        ntp_span_text(4980, t, sizeof t); CHECK(!strcmp(t, "1 h 23 min"));
+        ntp_span_text(93600, t, sizeof t); CHECK(!strcmp(t, "1 day 2 h"));
+        ntp_span_text(-5, t, sizeof t); CHECK(!strcmp(t, "0 s"));
+        CHECK(ntp_civil_s(1970, 1, 1) == 0 && ntp_civil_s(2010, 1, 1) == NTP_RESET_S && ntp_civil_s(2026, 10, 8) == 1791417600ll);
+        CHECK(ntp_civil_s(2000, 3, 1) == 951868800ll && ntp_civil_s(1969, 12, 31) == -86400);
     }
 
     printf(fails ? "%d check(s) failed\n" : "all checks passed\n", fails);
