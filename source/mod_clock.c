@@ -5,8 +5,10 @@
  * clock was reset (a flat RTC battery starts it at 2000). The time server is
  * pool.ntp.org through the console's resolver, or the first line of ntp.txt.
  * The network starts as in the Transfer module (net_init, mod_net.c); the
- * exchange is one journaled call, clock_ntp. The packets and the numbers are
- * in ntp.c. */
+ * exchange is one journaled call, clock_ntp. SQUARE sets the clock to the
+ * server's time after a confirm card: one system call (146), journaled as
+ * clock_set, the app's one write to the system. The packets and the numbers
+ * are in ntp.c. */
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -58,6 +60,11 @@ static char why[160];
 static s64 open_sys;                         /* the timer check: the system timer and the wall clock at the open */
 static ntp_us open_wall;
 static int visited;
+static int set_done;                         /* the clock was set (or the set was refused) in this session */
+static s32 set_rc;                           /* the set's result: 0, or the system's code */
+static ntp_us set_delta_us;                  /* the clock's move */
+static int set_frozen;                       /* journal_state("clock_set") == J_FROZEN at the open: no set */
+static int set_skipped;                      /* the server did not answer the fresh exchange before the set: not set */
 
 /* ---- the clocks ------------------------------------------------------------ */
 
@@ -282,12 +289,69 @@ static void job_query(void)
     judge();
 }
 
+/* ---- the set ------------------------------------------------------------- */
+
+/* The confirm card of SQUARE: 1 set, 0 keep the clock, -1 exit. */
+static int confirm_set(void)
+{
+    char t[32], msg[320];
+    ntp_offset_text(q.s[q.best].offset_us, t, sizeof t);
+    snprintf(msg, sizeof msg, "The console's clock moves to the time of %.40s: the server is asked again and the clock moved by the fresh offset (%s at the last reply). "
+             "One system call (146, the clock set), journaled as clock_set; then the server is asked once more, and the drift starts from that result.", q.server, t);
+    while (1) {
+        read_pad();
+        int back = ui_leave();
+        if (back <= 0) return back;
+        if (pressed & BTN_CROSS) return 1;
+        begin_frame();
+        title();
+        float x = MG + 40, w = SW - 2 * MG - 80, y = TOP + 10;
+        card(MG, y, SW - 2 * MG, 430);
+        float ty = heading(x, y + 22, "SET THE CONSOLE CLOCK");
+        text(x, ty + 6, F_LARGE | TNUM, WHITE, "%s", t);
+        int lines = text_wrap(x, ty + 110, F_BODY, GREY, w, 4, msg);
+        text_wrap(x, ty + 110 + lines * wrap_step(F_BODY) + 16, F_BODY, DIM, w, 2,
+                  "The system's own Set Automatically corrects the clock only at a PlayStation Network sign-in. Games and the system see the new time at once.");
+        footer("CROSS set the clock  CIRCLE keep it  START exit");
+        ui_flip();
+    }
+}
+
+/* The set: a fresh exchange (the open's offset may be minutes old), its
+ * best offset added to the clock, then the server asked once more. The
+ * target is taken right before the call: the journal's synced write before
+ * it takes milliseconds (rc1 on the console: a set 5.6 ms short). A refused
+ * call leaves the clock as it was. */
+static void job_set(void)
+{
+    u64 sec, nsec;
+    set_skipped = 0;
+    query_run();
+    if (!q.have) { set_skipped = 1; judge(); return; }
+    ntp_us delta = q.s[q.best].offset_us;
+    progress("Setting the clock");
+    if (fs_ok && !journal_start("clock_set")) { set_frozen = 1; judge(); return; }
+    ntp_set_target(wall_us(), delta, &sec, &nsec);
+    set_rc = sysSetCurrentTime(sec, nsec);
+    if (fs_ok) journal_done("clock_set", set_rc, set_rc == 0);
+    set_done = 1;
+    if (set_rc) { judge(); return; }
+    set_delta_us = delta;
+    open_wall += delta;                      /* the timer check: the wall clock moved by the set, not by itself */
+    gap();
+    query_run();
+    judge();
+}
+
 /* ---- tile, quick check ---------------------------------------------------- */
 
 static void drift_line(char *s, int n)
 {
-    if (drift_set) {
-        char t[32];
+    char t[32];
+    if (set_done && set_rc == 0) {
+        ntp_offset_text(set_delta_us, t, sizeof t);
+        snprintf(s, n, "Clock set in this session (%s)", t);
+    } else if (drift_set) {
         ntp_offset_text(-drift_step_us, t, sizeof t);
         snprintf(s, n, "Clock set since the last run (%s)", t);
     } else if (have_drift) {
@@ -423,7 +487,21 @@ static void draw_drift(float x, float y, float w, float h)
     card(x, y, w, h);
     float cx = x + 32, cw = w - 64, bottom = y + h - 16;
     float ty = heading(cx, y + 22, "DRIFT BETWEEN RUNS");
-    if (drift_set) {
+    int extra = 0;                           /* a second line of the set's message */
+    if (set_done && set_rc == 0) {
+        char t[32], m[200];
+        ntp_offset_text(set_delta_us, t, sizeof t);
+        snprintf(m, sizeof m, "The clock was set in this session (%s, to the server's time), then the server asked again. The drift starts again from that result.", t);
+        extra = (text_wrap(cx, ty + 6, F_MED, GREEN, cw, 2, m) - 1) * wrap_step(F_MED);
+    } else if (set_done) {
+        char m[200];
+        snprintf(m, sizeof m, "The clock could not be set: the system returned 0x%08x. Set it in the system settings (Date and Time Settings).", (unsigned)set_rc);
+        extra = (text_wrap(cx, ty + 6, F_MED, YELLOW, cw, 2, m) - 1) * wrap_step(F_MED);
+    } else if (set_frozen) {
+        extra = (text_wrap(cx, ty + 6, F_MED, YELLOW, cw, 2, "The clock set froze this console before: not made again. SQUARE twice on the home screen clears the journal.") - 1) * wrap_step(F_MED);
+    } else if (set_skipped) {
+        extra = (text_wrap(cx, ty + 6, F_MED, YELLOW, cw, 2, "The server did not answer the exchange before the set: the clock was not set.") - 1) * wrap_step(F_MED);
+    } else if (drift_set) {
         char t[32];
         utc_tm(drift_since_s + console_utc_offset(), &tm);
         ntp_offset_text(-drift_step_us, t, sizeof t);
@@ -438,7 +516,7 @@ static void draw_drift(float x, float y, float w, float h)
     else if (!nhist) text_fit(cx, ty + 6, F_MED, GREY, cw, "%s", q.have ? "First result kept: the next run shows the drift." : "No result kept yet: a quartz clock drifts a few seconds a month.");
     else if (q.have) text_fit(cx, ty + 6, F_MED, GREY, cw, "Two results under 10 min apart: no drift yet.");
     else text_fit(cx, ty + 6, F_MED, GREY, cw, "%d result%s kept: the drift shows after an answer.", nhist, nhist == 1 ? "" : "s");
-    ty += 52;
+    ty += 52 + extra;
     if (append_rc) { text_fit(cx, ty, F_SMALL, YELLOW, cw, "The result could not be written to clock.txt (rc 0x%08x).", (unsigned)append_rc); ty += 32; }
     int fit = (int)((bottom - ty) / 36);
     if (fit <= 0 || !nhist) return;
@@ -464,6 +542,7 @@ int mod_clock_open(void)
     open_sys = sysGetSystemTime();
     open_wall = wall_us();
     int can = net_is_up() && journal_state("clock_ntp") != J_FROZEN;
+    set_frozen = journal_state("clock_set") == J_FROZEN;
     if (can) run_job_cancelable("Asking the time server", job_query);
     else judge();
     clock_tile();
@@ -476,6 +555,15 @@ int mod_clock_open(void)
             clock_tile();
             write_report();
         }
+        if ((pressed & BTN_SQUARE) && can && q.have && !set_frozen) {
+            int r = confirm_set();
+            if (r < 0) { clock_tile(); return -1; }
+            if (r == 1) {
+                run_job("Setting the clock", job_set);
+                clock_tile();
+                write_report();
+            }
+        }
         begin_frame();
         title();
         float w = SW - 2 * MG, cw = (w - 32) / 2, h1 = 372, y2 = TOP + h1 + 24;
@@ -484,7 +572,8 @@ int mod_clock_open(void)
         if (y2 + 120 <= BOTTOM) draw_drift(MG, y2, w, BOTTOM - 4 - y2);
         if (level >= 0) status_linef(level_color(), "%s%s.", level == 0 ? "No problem found: " : level == 1 ? "Check: " : "Problem: ", why);
         else status_line(q.done ? "No verdict: the exchange did not run." : "The console keeps its clock on a small battery: this checks it against the internet.", GREY);
-        footer(can ? "CROSS ask the time server again  CIRCLE home  START exit" : "CIRCLE home  START exit");
+        footer(!can ? "CIRCLE home  START exit" : q.have && !set_frozen ? "CROSS ask again  SQUARE set the clock  CIRCLE home  START exit"
+                                                                      : "CROSS ask the time server again  CIRCLE home  START exit");
         report_footnote();
         ui_flip();
     }
@@ -509,7 +598,10 @@ void mod_clock_report(void)
         for (int k = 0; k < q.got; k++) rep_out(" %+.3f/%lld", (double)q.s[k].offset_us / 1e6, (long long)(q.s[k].rtt_us / 1000));
         rep_out("\n");
     } else if (q.done) rep_out("time server %s: no answer, %s\n", q.server, no_reply());
-    if (have_drift) {
+    if (set_done && set_rc == 0) rep_out("clock set: moved %+.3f s to the server's time (sys_time_set_current_time), then asked again\n", (double)set_delta_us / 1e6);
+    else if (set_done) rep_out("clock set refused: rc 0x%08x, the clock as it was\n", (unsigned)set_rc);
+    else if (set_skipped) rep_out("clock set skipped: no answer from the server before it\n");
+    if (have_drift && !(set_done && set_rc == 0)) {    /* a drift across this session's set is not one (the screen hides it too) */
         utc_tm(drift_since_s, &ut);
         ntp_span_text(drift_span_s, span, sizeof span);
         if (drift_set) rep_out("clock set since the last result: the console's clock moved %+.3f s against the server over %s, since %04d-%02d-%02d %02d:%02d UTC (no drift rate)\n",

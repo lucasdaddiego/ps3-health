@@ -69,7 +69,11 @@ too: `netSocket` gives a UDP socket when `PV_NTP` is set, `netSendTo` keeps
 the 48-byte request, `netPoll` and `netRecvFrom` answer after `PV_NTP` frames
 with a stratum 2 reply whose receive and transmit times are the preview's
 clock plus `PV_NTP_OFF_MS` (the preview's wall clock moves by whole seconds,
-so an offset comes out short by the frames in flight). `stub/pv_health.h`
+so an offset comes out short by the frames in flight). The clock set
+(`sysSetCurrentTime`, declared in `stub/pv_health.h`, defined in `pv_app.c`)
+answers EPERM with `PV_CLOCK_SET=refused`; else it keeps the set as a shift
+that the server's replies take into account, since the library's clock does
+not move: the set shows as the offset going to 0. `stub/pv_health.h`
 declares `videoDeviceInfo` and `videoGetDeviceInfo` as PSL1GHT has them
 (the library's `sysutil/video.h` has the video state alone), and `pv_app.c`
 answers with an HDMI TV, or the rc of `PV_TV_RC`.

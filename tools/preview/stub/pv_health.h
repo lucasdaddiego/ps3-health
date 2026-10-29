@@ -14,6 +14,7 @@ s32 sysLv2FsRename(const char *from, const char *to);   /* boot.c: boot.txt to b
 #define SOCK_RAW 3
 #define IPPROTO_ICMP 1
 #define IPPROTO_UDP 17                       /* the Clock module's time server */
+s32 sysSetCurrentTime(u64 sec, u64 nsec);    /* the Clock module's clock set: pv_app.c (the library's stub has the read alone) */
 #define NET_EPROTONOSUPPORT 43
 
 /* The TV's data as PSL1GHT's sysutil/video.h has it: the library's stub has

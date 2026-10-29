@@ -531,6 +531,20 @@ ssize_t netSendTo(s32 s, const void *b, size_t l, s32 f, const struct sockaddr *
  * kiss-o'-death (RATE). Unset: no UDP socket. The server must be an address
  * in ntp.txt: the resolver gives no list on the host (netGetHostByName). */
 static int ntp_frames(void) { return getenv("PV_NTP") ? atoi(getenv("PV_NTP")) : 0; }
+
+/* The clock set (the Clock module's SQUARE): PV_CLOCK_SET=refused answers
+ * EPERM; else the set is kept as a shift of the console's clock, which the
+ * time server's replies take into account (the library's clock itself does
+ * not move, so the set shows as the server's offset going to 0). */
+static long long pv_clock_shift_us;
+s32 sysSetCurrentTime(u64 sec, u64 nsec)
+{
+    if (getenv("PV_CLOCK_SET") && !strcmp(getenv("PV_CLOCK_SET"), "refused")) return (s32)0x80010009;
+    u64 s = 0, ns = 0;
+    sysGetCurrentTime(&s, &ns);
+    pv_clock_shift_us += (long long)(sec * 1000000 + nsec / 1000) - (long long)(s * 1000000 + ns / 1000);
+    return 0;
+}
 static int ntp_none(void) { return getenv("PV_NTP") && !strcmp(getenv("PV_NTP"), "none"); }
 
 static void ntp_stamp(uint8_t *p, u64 us)
@@ -546,7 +560,7 @@ static ssize_t ntp_reply(uint8_t *o, size_t l)
     wait_until(ntp_sent_at + (u64)ntp_frames() * 16667);
     u64 sec = 0, nsec = 0;
     sysGetCurrentTime(&sec, &nsec);
-    u64 now = sec * 1000000 + nsec / 1000 + (u64)((long long)(getenv("PV_NTP_OFF_MS") ? atoll(getenv("PV_NTP_OFF_MS")) : 0) * 1000);
+    u64 now = sec * 1000000 + nsec / 1000 + (u64)((long long)(getenv("PV_NTP_OFF_MS") ? atoll(getenv("PV_NTP_OFF_MS")) : 0) * 1000 - pv_clock_shift_us);
     memset(o, 0, 48);
     o[0] = 0x24;                             /* version 4, mode 4 (server) */
     o[1] = 2;                                /* stratum 2 */

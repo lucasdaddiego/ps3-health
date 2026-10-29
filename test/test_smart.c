@@ -701,6 +701,13 @@ int main(void)
         rep[44] = 0x80;
         CHECK(ntp_parse(rep, 47, req, &r) == -1);
         CHECK(ntp_parse(rep, 48, req, &r) == 0 && r.stratum == 2 && r.precision == -20 && r.mode == 4 && r.version == 4);
+        uint64_t ss, ns;                           /* the clock set's target: now + the offset, as seconds and nanoseconds */
+        ntp_set_target(t1, 310000, &ss, &ns);
+        CHECK(ss == 1791460800ull && ns == 560000000ull);
+        ntp_set_target(t1, -35200000, &ss, &ns);
+        CHECK(ss == 1791460765ull && ns == 50000000ull);
+        ntp_set_target(5, -10, &ss, &ns);
+        CHECK(ss == 0 && ns == 0);
         CHECK(r.t2 == 1791460801250000ll && r.t3 == 1791460801500000ll);
         ntp_sample_calc(t1, r.t2, r.t3, t1 + 400000, &sm);   /* t4 = t1 + 400 ms: ((1.0) + (1.25 - 0.4)) / 2, (0.4) - (0.25) */
         CHECK(sm.offset_us == 925000 && sm.rtt_us == 150000);

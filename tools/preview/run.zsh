@@ -336,6 +336,16 @@ clock|all)   # the Clock module: the server (an address in ntp.txt: the host res
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 CLOCKTXT=$'1791457200 -35200 16 192.168.0.1\n' scn clock_set "$CLOCK 100:SNAP=clock_set 102:CIRCLE 110:SNAP=home_clock_set 111:EXIT" PV_NTP=1 PV_NTP_OFF_MS=310
     grep -h -E "^(clock set|drift)" $SBX/clock_set/dev_hdd0/tmp/ps3_health/report-*.txt
     cut -d'|' -f1,2,4,5 $SBX/clock_set/dev_hdd0/tmp/ps3_health/state.txt ;|
+clock_fix|all)   # SQUARE sets the clock (the console 35.2 s ahead): the confirm card, the set, the server asked again; CIRCLE keeps it; the system refuses; the set froze before
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn clock_fix "$CLOCK 100:SNAP=clock_fix_before 102:SQUARE 110:SNAP=clock_fix_ask 112:CROSS 230:SNAP=clock_fix 232:CIRCLE 240:SNAP=home_clock_fix 241:EXIT" PV_NTP=1 PV_NTP_OFF_MS=-35200
+    grep -h -E "^(time server|clock set|verdict)" $SBX/clock_fix/dev_hdd0/tmp/ps3_health/report-*.txt
+    cat $SBX/clock_fix/dev_hdd0/tmp/ps3_health/clock.txt
+    grep -h "clock_set" $SBX/clock_fix/dev_hdd0/tmp/ps3_health/journal.txt | sed 's/^/  /'
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn clock_fix_keep "$CLOCK 100:SQUARE 110:CIRCLE 120:SNAP=clock_fix_keep 122:CIRCLE 130:EXIT" PV_NTP=1 PV_NTP_OFF_MS=-35200
+    print "  clock_set lines in the journal: $(grep -h -c clock_set $SBX/clock_fix_keep/dev_hdd0/tmp/ps3_health/journal.txt) (0 expected)"
+    SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn clock_fix_refused "$CLOCK 100:SQUARE 110:CROSS 160:SNAP=clock_fix_refused 162:CIRCLE 170:SNAP=home_clock_fix_refused 171:EXIT" PV_NTP=1 PV_NTP_OFF_MS=-35200 PV_CLOCK_SET=refused
+    grep -h "^clock set" $SBX/clock_fix_refused/dev_hdd0/tmp/ps3_health/report-*.txt
+    SAFE=$DEF_SAFE STATE= JOURNAL="${J_DONE}start clock_set"$'\n' NTP=192.168.0.1 scn clock_fix_frozen "$CLOCK 100:SQUARE 110:SNAP=clock_fix_frozen 111:EXIT" PV_NTP=1 PV_NTP_OFF_MS=-35200 ;|
 clock_none|all)   # no answer in 1.5 s per sample: a yellow verdict; then the server refuses (kiss-o'-death); then 2 min off: red
     SAFE=$DEF_SAFE STATE= JOURNAL=$J_DONE NTP=192.168.0.1 scn clock_none "$CLOCK 500:SNAP=clock_none 502:CIRCLE 510:SNAP=home_clock_none 511:EXIT" PV_NTP=none
     grep -h -E "^(time server|verdict)" $SBX/clock_none/dev_hdd0/tmp/ps3_health/report-*.txt

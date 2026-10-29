@@ -182,3 +182,11 @@ int64_t ntp_civil_s(int y, int m, int d)
     int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     return (era * 146097 + doe - 719468) * 86400;
 }
+
+void ntp_set_target(ntp_us now_us, ntp_us offset_us, uint64_t *sec, uint64_t *nsec)
+{
+    ntp_us t = now_us + offset_us;
+    if (t < 0) t = 0;
+    *sec = (uint64_t)(t / 1000000);
+    *nsec = (uint64_t)(t % 1000000) * 1000;
+}

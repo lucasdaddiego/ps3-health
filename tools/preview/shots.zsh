@@ -59,6 +59,8 @@ AREA= JOURNAL= STATE= shot calib "3:SNAP=calibration 4:EXIT"
 AREA=$FULL JOURNAL=$J STATE= shot mem "4:DOWN 6:RIGHT 8:RIGHT 10:CROSS 20:CROSS 2000:SNAP=memory 2001:EXIT"
 # the clock shot: the server 0.3 s ahead, two results kept 3 and 10 days before the preview's clock (2026-10-08 12:00 UTC)
 AREA=$FULL JOURNAL=$J STATE= NTP=192.168.0.1 CLOCKTXT=$'1790596800 -500 31 192.168.0.1\n1791201600 -120 23 192.168.0.1\n' shot clock "4:DOWN 6:RIGHT 8:RIGHT 10:RIGHT 12:CROSS 100:SNAP=clock 101:EXIT" PV_NTP=1 PV_NTP_OFF_MS=310
+# the clock set shot: SQUARE's confirm card, the console 35.2 s ahead of the server
+AREA=$FULL JOURNAL=$J STATE= NTP=192.168.0.1 shot clock_set "4:DOWN 6:RIGHT 8:RIGHT 10:RIGHT 12:CROSS 100:SQUARE 110:SNAP=clock_set 111:EXIT" PV_NTP=1 PV_NTP_OFF_MS=-35200
 AREA=$FULL JOURNAL=$J STATE= shot tv "4:LEFT 6:LEFT 8:CROSS 16:RIGHT 24:SNAP=tv 25:EXIT"
 ${PYTHON:-python3} -I - "$OUT" "$R/docs" <<'PY'
 import glob, os, sys

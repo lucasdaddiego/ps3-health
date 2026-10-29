@@ -78,7 +78,7 @@ temperatures, the SPU rates, the sticks and the memory size are simulated.
 <td><img src="docs/trend.png" alt="Drive, trend page"><br>Drive, trend page: the full reads of this drive, newest first, and the change since the first one.</td>
 </tr>
 <tr>
-<td><img src="docs/clock.png" alt="Clock module"><br>Clock: the console's clock against the time server, and its drift since the last runs.</td>
+<td><img src="docs/clock.png" alt="Clock module"><br>Clock: the console's clock against the time server, and its drift since the last runs. SQUARE sets it (<a href="docs/clock_set.png">the confirm card</a>).</td>
 <td><img src="docs/tv.png" alt="Display, TV page"><br>Display, TV page: what the TV told the console over HDMI.</td>
 </tr>
 </table>
@@ -87,7 +87,9 @@ temperatures, the SPU rates, the sticks and the memory size are simulated.
 
 The app was tested on one console: a PS3 Super Slim on **HFW 4.93 with PS3HEN
 3.6.0** and a Dahua V800 1 TB SATA SSD. The table lists the versions tested on
-the console. 2.3.0 adds the Clock module (the clock against a time server,
+the console. 2.4.0 adds the clock set to the Clock module: SQUARE, a confirm
+card with the move, then one system call, the app's one write to the system.
+2.3.0 adds the Clock module (the clock against a time server,
 the drift between runs, the reset warning), the TV page of the Display module
 (what the TV told the console), a fifth step of the quick check (the clock)
 and a tile for the quick check, so the home screen is five tiles by two.
@@ -134,6 +136,7 @@ drive and the result, and it goes into this table.
 
 | Model | Firmware | Drive | Version | Result | Source |
 |---|---|---|---|---|---|
+| Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.4.0 | rc1 to rc3, three rounds through webMAN's virtual pad and a camera on the TV, the same day as 2.3.0: the clock set from the Clock screen (SQUARE, the confirm card, CROSS): LV2 accepts syscall 146 from the app on HEN. rc1 moved the clock +0.507 s and the server then read +0.005 s, 5.6 ms short, because the target was taken before the journal's synced write (the timer check showed the -5640 us); rc2 asks the server afresh and takes the target right before the call: +0.02 s before, -0.00 s after (samples +0.002, +0.001, -0.000, +0.000 s), the timer check -13 us in 21 s; rc3 (the report no longer prints a drift across the session's set) the same: +0.00 s before, -0.00 s after, -11 us in 21 s. The journal: clock_ntp, clock_set rc 0, clock_ntp, all ok, three times. The drift card between the rounds: -1.60 s per day (-18.6 ppm) over 14 min. The other modules are those of 2.3.0 | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.3.0 | rc1 to rc3, three rounds through webMAN's virtual pad and a camera on the TV: the 5x2 home; Clock against pool.ntp.org (stratum 3, round trip 14 to 16 ms, 4 of 4 replies): the console 35.20 s ahead of the server, a yellow verdict, the timer check -7 us in 35 s (the wall clock runs from the system timer), and 25 min later the drift card: -1.47 s per day (-17 ppm); then the clock set from the XMB (Date and Time Settings, Set via Internet: "completed", so the firmware's server still answers on HEN) and rc3's Clock 30 min after: +0.38 s, stratum 2, and the drift card's "the clock was set" line with the -35.56 s step instead of a rate; the TV page (HDMI; RGB, YUV and xvYCC; full range; no EDID latency; 1 HDCP key; red 0.670 0.314, green 0.271 0.645, blue 0.152 0.054, white 0.281 0.284, gamma 2.20; 13 modes, 1080p to 480p); the quick check with its five steps in under a minute (Drive health OK at 1364 h, Cell 58 C, RSX 55 C, fan 25 %, XDR 197 MB and RSX 231 MB with no error, SPU ok, the router 1.9 ms with no loss, the clock step yellow); the journal 24 calls ok, no freeze; the exit by START; USB, LAN, Audio and Controller not run | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.2.1 | rc3, after the console checks of the second review's fixes (Claude's round through webMAN's virtual pad and a camera on the TV, then the author's own session): the start to the home screen; the memory tests (XDR 197 MB, read and compare 530 MB/s, was 347; RSX 231 MB read back by the RSX's copy, 201 MB/s, was 126; XDR still 197 MB after the RSX test; the six SPU local stores in 0.16 s; no errors); the 2-minute load test (Cell 61 to 68 C, RSX 57 to 63 C, 6 C a minute, fan 25 %, about 165 M loops a second on each SPU); the drive reads, SMART and a self-test to its result; Audio's tones, the 8-speaker walk and the 12 s sweep heard; Network (cable, 1000 Mbit/s full duplex, ICMP 5 of 5, 1.8 ms); internet 34.5 Mbit/s; the display (1080p, visible area 1920 x 1080); "flawless" in the author's words; rc1 and rc2 before it: the 4x2 home and the first screen of every tile but Drive and Help, the journal clear cancelled by RIGHT; USB and LAN not run | author |
 | Super Slim (CECH-4xxx) | HFW 4.93 + PS3HEN 3.6.0 | Dahua V800 1 TB SATA SSD | 2.2.0 | through webMAN's virtual pad and a camera on the TV: the 4x2 home, Network (cable, 1000 Mbit/s full duplex, ICMP to the router 20 of 20, 1.9 ms, jitter 0.1 ms, DNS 27 ms), the quick check (all four steps ok in under 30 s), Audio (the 8-channel port at 48 kHz, the sweep played; no answers given), the 2-minute load test (Cell 60 to 67 C, RSX 56 to 62 C, fan 25 %) with the super slim paste estimate, the 30-minute soak (Cell 61 to 71 C, RSX 57 to 65 C, 846 memory passes and 6 SPU local-store turns, no error; rc4 with the new loops: 1266 passes, Cell 59 to 71 C, no error), the memory tests on rc4 (XDR 197 MB in kernel pages, write 782 MB/s, read and compare 347 MB/s; RSX 231 MB read back by the RSX's copy at 126 MB/s, 10 MB/s through the mapping on rc3; the SPU local stores after an XDR test, no ENOMEM), the warm-start estimate, the masked serial on the Drive screen, the life-left line ("5 days of reads, it needs 14"); the journal 135 calls ok in 43 min (rc1) and 140 in 37 min (rc4), no freeze; the controller, the display patterns, USB, LAN and the Audio answers not run | author |
@@ -159,7 +162,7 @@ ends with the same text.
 
 ## Install
 
-1. Download `PS3-Health-v2.3.0.pkg` from [Releases](../../releases).
+1. Download `PS3-Health-v2.4.0.pkg` from [Releases](../../releases).
 2. Copy it to `/dev_hdd0/packages/` (FTP), or to the root of a FAT32 USB stick.
 3. With HEN on, install it: Game → Package Manager → Install Package Files (Standard
    or USB).
@@ -539,6 +542,19 @@ span since that line, and lists the last results. A rate past 200 ppm (a
 quartz clock stays under 50) means the clock was set between the runs: the
 card says so with the step, and the drift starts again from this result.
 
+SQUARE sets the clock. A card shows the move (the last reply's offset, to
+the server's time) and asks for CROSS; CIRCLE keeps the clock as it is. The
+module asks the server again first and moves the clock by that fresh offset
+(the open's may be minutes old). The set is one system call, 146
+(`sys_time_set_current_time`), journaled as `clock_set`, and the only write
+the app makes to the system; the module then asks the server once more, and
+the drift starts from that result. A server that does not answer before the
+set leaves the clock as it is. A refused call
+leaves the clock as it was, and the drift card shows the system's return
+code: set the clock in the system settings then. The system's own "Set
+Automatically" corrects the clock only at a PlayStation Network sign-in, so
+a console that never signs in keeps whatever "Set via Internet" last put.
+
 The verdict: no problem within 2 s of the server; check past 2 s, or when
 no reply came (port 123 is blocked on some networks); problem past 60 s, or
 when the clock is before 2010 (no PS3 firmware is older: the clock was
@@ -618,7 +634,7 @@ The self-tests do not change data: the drive checks itself and keeps serving
 normal I/O. The extended one reads the whole surface, so it takes long and
 slows the drive while it runs.
 
-The other system calls, all read-only and journaled like the drive calls:
+The other system calls, read-only but one (below) and journaled like the drive calls:
 383 `sys_game_get_temperature` (Cell and RSX) and, behind a first-run prompt,
 409 `sys_sm_get_fan_policy` (the fan duty). The speed and USB tests use the
 normal file calls, the Transfer and Network modules the normal socket calls
@@ -637,6 +653,11 @@ reads, syscall 602, and the console id, syscall 870, are refused on HEN: ENXIO
 and EPERM on the test console. The app does not call them.) The build checks
 this: `tools/syscalls.py` scans the ELF for every syscall number and fails on
 602, 604 or 870, or on a number outside `tools/syscalls.allow`.
+
+One system call writes: 146 `sys_time_set_current_time`, the Clock module's
+clock set (SQUARE on its screen, then CROSS on the confirm card that shows
+the move). It is journaled as `clock_set`, it changes the clock and nothing
+else, and the module asks the time server again right after it.
 
 The Memory module's SPU test and the Cooling module's load and soak tests run
 the app's own program on the six SPUs (the soak one group at a time), behind one first-run prompt (asked at the
@@ -859,7 +880,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push: the host test of
 the decoder, the speed test's file handling (`test/test_speed.py`), a compile
 and `--help` smoke of the Python scripts with the `syscalls.py` self-test, a
 check that `APP_VER` and `VERSION` in `sfo.xml` match `source/version.h`
-(2.3.0 is 02.30), and a pkg build on Linux with the same
+(2.4.0 is 02.40), and a pkg build on Linux with the same
 `sdk_setup.sh` (the pkg is a workflow artifact) followed by the syscall audit of
 its ELF. The signed EBOOT is verified in CI only when the repository secret
 `PS3DEV_KEYS_TOML` holds the key file. A `v*` tag

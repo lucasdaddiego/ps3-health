@@ -71,5 +71,9 @@ void ntp_offset_text(ntp_us us, char *out, int n);
 /* "1 h 23 min", "3 days 2 h", "45 s": a span, two units at most. */
 void ntp_span_text(int64_t sec, char *out, int n);
 int64_t ntp_civil_s(int y, int m, int d);    /* 00:00 UTC of a date as Unix seconds (proleptic Gregorian) */
+/* The target of a clock set: the console's clock now plus the offset, as the
+ * seconds and nanoseconds sys_time_set_current_time takes; a target before
+ * 1970 is 0. */
+void ntp_set_target(ntp_us now_us, ntp_us offset_us, uint64_t *sec, uint64_t *nsec);
 
 #endif
