@@ -1,7 +1,10 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # "/" covers .github/workflows only: the composite action's own pins need their folder
+    directories:
+      - /
+      - /.github/actions/ps3dev-sdk
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
