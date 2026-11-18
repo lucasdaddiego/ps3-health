@@ -5,3 +5,6 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # a version must be 7 days old before Dependabot offers it (security updates ignore this)
+    cooldown:
+      default-days: 7
