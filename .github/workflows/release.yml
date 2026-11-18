@@ -24,7 +24,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/ps3dev-sdk
+      - uses: $/.github/actions/ps3dev-sdk
 
       - name: Host test, then make pkg
         run: |
